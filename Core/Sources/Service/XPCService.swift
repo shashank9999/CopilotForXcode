@@ -6,6 +6,9 @@ import Logger
 import Preferences
 import Status
 import XPCShared
+import HostAppActivator
+import XcodeInspector
+import GitHubCopilotViewModel
 
 public class XPCService: NSObject, XPCServiceProtocol {
     // MARK: - Service
@@ -16,10 +19,31 @@ public class XPCService: NSObject, XPCServiceProtocol {
             Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "N/A"
         )
     }
+    
+    public func getXPCCLSVersion(withReply reply: @escaping (String?) -> Void) {
+        Task { @MainActor in
+            do {
+                let service = try GitHubCopilotViewModel.shared.getGitHubCopilotAuthService()
+                let version = try await service.version()
+                reply(version)
+            } catch {
+                Logger.service.error("Failed to get CLS version: \(error.localizedDescription)")
+                reply(nil)
+            }
+        }
+    }
 
     public func getXPCServiceAccessibilityPermission(withReply reply: @escaping (ObservedAXStatus) -> Void) {
         Task {
             reply(await Status.shared.getAXStatus())
+        }
+    }
+    
+    public func getXPCServiceExtensionPermission(
+        withReply reply: @escaping (ExtensionPermissionStatus) -> Void
+    ) {
+        Task {
+            reply(await Status.shared.getExtensionStatus())
         }
     }
 
@@ -144,12 +168,23 @@ public class XPCService: NSObject, XPCServiceProtocol {
     }
 
     public func openChat(
-        editorContent: Data,
-        withReply reply: @escaping (Data?, Error?) -> Void
+        withReply reply: @escaping (Error?) -> Void
     ) {
-        let handler = PseudoCommandHandler()
-        handler.openChat(forceDetach: false)
-        reply(nil, nil)
+        Task {
+            do {
+                // Check if app is already running
+                if let _ = getRunningHostApp() {
+                    // App is already running, use the chat service
+                    let handler = PseudoCommandHandler()
+                    handler.openChat(forceDetach: true)
+                } else {
+                    try launchHostAppDefault()
+                }
+                reply(nil)
+            } catch {
+                reply(error)
+            }
+        }
     }
 
     public func promptToCode(
@@ -219,6 +254,89 @@ public class XPCService: NSObject, XPCServiceProtocol {
             reply: reply
         )
     }
+
+    // MARK: - XcodeInspector
+
+    public func getXcodeInspectorData(withReply reply: @escaping (Data?, Error?) -> Void) {
+        do {
+            // Capture current XcodeInspector data
+            let inspectorData = XcodeInspectorData(
+                activeWorkspaceURL: XcodeInspector.shared.activeWorkspaceURL?.absoluteString,
+                activeProjectRootURL: XcodeInspector.shared.activeProjectRootURL?.absoluteString,
+                realtimeActiveWorkspaceURL: XcodeInspector.shared.realtimeActiveWorkspaceURL?.absoluteString,
+                realtimeActiveProjectURL: XcodeInspector.shared.realtimeActiveProjectURL?.absoluteString,
+                latestNonRootWorkspaceURL: XcodeInspector.shared.latestNonRootWorkspaceURL?.absoluteString
+            )
+            
+            // Encode and send the data
+            let data = try JSONEncoder().encode(inspectorData)
+            reply(data, nil)
+        } catch {
+            Logger.service.error("Failed to encode XcodeInspector data: \(error.localizedDescription)")
+            reply(nil, error)
+        }
+    }
+    
+    // MARK: - MCP Server Tools
+    public func getAvailableMCPServerToolsCollections(withReply reply: @escaping (Data?) -> Void) {
+        let availableMCPServerTools = CopilotMCPToolManager.getAvailableMCPServerToolsCollections()
+        if let availableMCPServerTools = availableMCPServerTools {
+            // Encode and send the data
+            let data = try? JSONEncoder().encode(availableMCPServerTools)
+            reply(data)
+        } else {
+            reply(nil)
+        }
+    }
+
+    public func updateMCPServerToolsStatus(tools: Data) {
+        // Decode the data
+        let decoder = JSONDecoder()
+        var collections: [UpdateMCPToolsStatusServerCollection] = []
+        do {
+            collections = try decoder.decode([UpdateMCPToolsStatusServerCollection].self, from: tools)
+            if collections.isEmpty {
+                return
+            }
+        } catch {
+            Logger.service.error("Failed to decode MCP server collections: \(error)")
+            return
+        }
+
+        Task { @MainActor in
+            await GitHubCopilotService.updateAllClsMCP(collections: collections)
+        }
+    }
+    
+    // MARK: - FeatureFlags
+    public func getCopilotFeatureFlags(
+        withReply reply: @escaping (Data?) -> Void
+    ) {
+        let featureFlags = FeatureFlagNotifierImpl.shared.featureFlags
+        let data = try? JSONEncoder().encode(featureFlags)
+        reply(data)
+    }
+    
+    // MARK: - Auth
+    public func signOutAllGitHubCopilotService() {
+        Task { @MainActor in
+            do {
+                try await GitHubCopilotService.signOutAll()
+            } catch {
+                Logger.service.error("Failed to sign out all: \(error)")
+            }
+        }
+    }
+    
+    public func getXPCServiceAuthStatus(withReply reply: @escaping (Data?) -> Void) {
+        Task { @MainActor in
+            let service = try GitHubCopilotViewModel.shared.getGitHubCopilotAuthService()
+            _ = try await service.checkStatus()
+            let authStatus = await Status.shared.getAuthStatus()
+            let data = try? JSONEncoder().encode(authStatus)
+            reply(data)
+        }
+    }
 }
 
 struct NoAccessToAccessibilityAPIError: Error, LocalizedError {
@@ -228,4 +346,3 @@ struct NoAccessToAccessibilityAPIError: Error, LocalizedError {
 
     init() {}
 }
-

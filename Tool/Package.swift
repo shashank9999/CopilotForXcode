@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "Terminal", targets: ["Terminal"]),
         .library(name: "Preferences", targets: ["Preferences", "Configs"]),
         .library(name: "Logger", targets: ["Logger"]),
+        .library(name: "SystemUtils", targets: ["SystemUtils"]),
         .library(name: "ChatAPIService", targets: ["ChatAPIService"]),
         .library(name: "ChatTab", targets: ["ChatTab"]),
         .library(name: "FileSystem", targets: ["FileSystem"]),
@@ -18,8 +19,10 @@ let package = Package(
         .library(name: "Toast", targets: ["Toast"]),
         .library(name: "SharedUIComponents", targets: ["SharedUIComponents"]),
         .library(name: "Status", targets: ["Status"]),
+        .library(name: "Persist", targets: ["Persist"]),
         .library(name: "UserDefaultsObserver", targets: ["UserDefaultsObserver"]),
         .library(name: "Workspace", targets: ["Workspace", "WorkspaceSuggestionService"]),
+        .library(name: "WebContentExtractor", targets: ["WebContentExtractor"]),
         .library(
             name: "SuggestionProvider",
             targets: ["SuggestionProvider"]
@@ -27,6 +30,14 @@ let package = Package(
         .library(
             name: "ConversationServiceProvider",
             targets: ["ConversationServiceProvider"]
+        ),
+        .library(
+            name: "TelemetryServiceProvider",
+            targets: ["TelemetryServiceProvider"]
+        ),
+        .library(
+            name: "TelemetryService",
+            targets: ["TelemetryService"]
         ),
         .library(
             name: "GitHubCopilotService",
@@ -49,14 +60,19 @@ let package = Package(
         .library(name: "DebounceFunction", targets: ["DebounceFunction"]),
         .library(name: "AsyncPassthroughSubject", targets: ["AsyncPassthroughSubject"]),
         .library(name: "CustomAsyncAlgorithms", targets: ["CustomAsyncAlgorithms"]),
+        .library(name: "AXHelper", targets: ["AXHelper"]),
+        .library(name: "Cache", targets: ["Cache"]),
+        .library(name: "StatusBarItemView", targets: ["StatusBarItemView"]),
+        .library(name: "HostAppActivator", targets: ["HostAppActivator"]),
+        .library(name: "AppKitExtension", targets: ["AppKitExtension"])
     ],
     dependencies: [
         // TODO: Update LanguageClient some day.
-        .package(url: "https://github.com/ChimeHQ/LanguageClient", exact: "0.3.1"),
-        .package(url: "https://github.com/ChimeHQ/LanguageServerProtocol", exact: "0.8.0"),
+        .package(url: "https://github.com/ChimeHQ/LanguageClient", exact: "0.8.2"),
+        .package(url: "https://github.com/ChimeHQ/LanguageServerProtocol", exact: "0.13.3"),
         .package(url: "https://github.com/apple/swift-async-algorithms", from: "1.0.0"),
         .package(url: "https://github.com/pointfreeco/swift-parsing", from: "0.12.1"),
-        .package(url: "https://github.com/ChimeHQ/JSONRPC", exact: "0.6.0"),
+        .package(url: "https://github.com/ChimeHQ/JSONRPC", exact: "0.9.0"),
         .package(url: "https://github.com/devm33/Highlightr", branch: "master"),
         .package(
             url: "https://github.com/pointfreeco/swift-composable-architecture",
@@ -64,18 +80,22 @@ let package = Package(
         ),
         .package(url: "https://github.com/GottaGetSwifty/CodableWrappers", from: "2.0.7"),
         // TODO: remove CopilotForXcodeKit dependency once extension provider logic is removed.
-        .package(url: "https://github.com/devm33/CopilotForXcodeKit", branch: "main")
+        .package(url: "https://github.com/devm33/CopilotForXcodeKit", branch: "main"),
+        .package(url: "https://github.com/stephencelis/SQLite.swift", from: "0.15.3"),
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.9.6")
     ],
     targets: [
         // MARK: - Helpers
 
-        .target(name: "XPCShared", dependencies: ["SuggestionBasic", "Logger", "Status"]),
+        .target(name: "XPCShared", dependencies: ["SuggestionBasic", "Logger", "Status", "HostAppActivator", "GitHubCopilotService"]),
 
         .target(name: "Configs"),
 
         .target(name: "Preferences", dependencies: ["Configs"]),
 
-        .target(name: "Terminal"),
+        .target(name: "Terminal", dependencies: ["Logger", "SystemUtils"]),
+        
+        .target(name: "WebContentExtractor", dependencies: ["Logger", "SwiftSoup", "Preferences"]),
 
         .target(name: "Logger"),
 
@@ -90,10 +110,10 @@ let package = Package(
 
         .target(
             name: "Toast",
-            dependencies: [.product(
-                name: "ComposableArchitecture",
-                package: "swift-composable-architecture"
-            )]
+            dependencies: [
+                "AppKitExtension",
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture")
+            ]
         ),
 
         .target(name: "DebounceFunction"),
@@ -107,6 +127,13 @@ let package = Package(
         ),
 
         .target(name: "ActiveApplicationMonitor"),
+        
+        .target(
+            name: "HostAppActivator",
+            dependencies: [
+                "Logger",
+            ]
+        ),
 
         .target(
             name: "SuggestionBasic",
@@ -185,8 +212,10 @@ let package = Package(
                 "Logger",
                 "Preferences",
                 "XcodeInspector",
+                "ConversationServiceProvider"
             ]
         ),
+        .testTarget(name: "WorkspaceTests", dependencies: ["Workspace"]),
 
         .target(
             name: "WorkspaceSuggestionService",
@@ -197,6 +226,20 @@ let package = Package(
                 "BuiltinExtension",
                 "GitHubCopilotService",
             ]
+        ),
+        
+        .target(
+            name: "AXHelper",
+            dependencies: [
+                "XPCShared",
+                "XcodeInspector"
+            ]
+        ),
+        
+        .target(name: "StatusBarItemView", dependencies: ["Cache"]),
+      
+        .target(
+            name: "Cache"
         ),
 
         .testTarget(
@@ -209,7 +252,19 @@ let package = Package(
 
         // MARK: - Services
 
-        .target(name: "Status"),
+        .target(
+            name: "Status",
+            dependencies: ["Cache"]
+        ),
+
+        .target(
+            name: "Persist",
+            dependencies: [
+                "Logger",
+                "Status",
+                .product(name: "SQLite", package: "SQLite.Swift")
+            ]
+        ),
 
         .target(name: "SuggestionProvider", dependencies: [
             "SuggestionBasic",
@@ -222,7 +277,23 @@ let package = Package(
         
         .target(name: "ConversationServiceProvider", dependencies: [
             .product(name: "CopilotForXcodeKit", package: "CopilotForXcodeKit"),
+            .product(name: "LanguageServerProtocol", package: "LanguageServerProtocol"),
         ]),
+        
+        .target(name: "TelemetryServiceProvider", dependencies: [
+            .product(name: "CopilotForXcodeKit", package: "CopilotForXcodeKit"),
+        ]),
+        
+        .target(
+            name: "TelemetryService",
+            dependencies: [
+                "TelemetryServiceProvider",
+                "GitHubCopilotService",
+                "BuiltinExtension",
+                "SystemUtils",
+                "UserDefaultsObserver",
+                "Preferences"
+            ]),
 
 
         // MARK: - GitHub Copilot
@@ -237,7 +308,11 @@ let package = Package(
                 "Terminal",
                 "BuiltinExtension",
                 "ConversationServiceProvider",
+                "TelemetryServiceProvider",
                 "Status",
+                "SystemUtils",
+                "Workspace",
+                "Persist",
                 .product(name: "LanguageServerProtocol", package: "LanguageServerProtocol"),
                 .product(name: "CopilotForXcodeKit", package: "CopilotForXcodeKit"),
             ]
@@ -255,6 +330,7 @@ let package = Package(
             dependencies: [
                 "Logger",
                 "Preferences",
+                "GitHubCopilotService",
                 .product(name: "JSONRPC", package: "JSONRPC"),
                 .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                 .product(
@@ -273,6 +349,18 @@ let package = Package(
                 package: "swift-composable-architecture"
             )]
         ),
+        
+        // MARK: - SystemUtils
+        
+        .target(
+            name: "SystemUtils",
+            dependencies: ["Logger"]
+        ),
+        .testTarget(name: "SystemUtilsTests", dependencies: ["SystemUtils"]),
+        
+        // MARK: - AppKitExtension
+        
+        .target(name: "AppKitExtension")
     ]
 )
 

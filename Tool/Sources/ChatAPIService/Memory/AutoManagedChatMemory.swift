@@ -1,6 +1,7 @@
 import Foundation
 import Logger
 import Preferences
+import ConversationServiceProvider
 
 @globalActor
 public enum AutoManagedChatMemoryActor: GlobalActor {
@@ -32,7 +33,7 @@ public actor AutoManagedChatMemory: ChatMemory {
 
     public var systemPrompt: String
     public var contextSystemPrompt: String
-    public var retrievedContent: [ChatMessage.Reference] = []
+    public var retrievedContent: [ConversationReference] = []
 
     var onHistoryChange: () -> Void = {}
 
@@ -62,6 +63,13 @@ public actor AutoManagedChatMemory: ChatMemory {
         contextSystemPrompt = ""
         self.composeHistory = composeHistory
     }
+    
+    deinit {
+        history.removeAll()
+        onHistoryChange = {}
+        
+        retrievedContent.removeAll()
+    }
 
     public func mutateHistory(_ update: (inout [ChatMessage]) -> Void) {
         update(&history)
@@ -71,7 +79,7 @@ public actor AutoManagedChatMemory: ChatMemory {
         contextSystemPrompt = newPrompt
     }
 
-    public func mutateRetrievedContent(_ newContent: [ChatMessage.Reference]) {
+    public func mutateRetrievedContent(_ newContent: [ConversationReference]) {
         retrievedContent = newContent
     }
 

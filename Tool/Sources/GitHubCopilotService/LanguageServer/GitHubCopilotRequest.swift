@@ -3,6 +3,7 @@ import JSONRPC
 import LanguageServerProtocol
 import Status
 import SuggestionBasic
+import ConversationServiceProvider
 
 struct GitHubCopilotDoc: Codable {
     var source: String
@@ -50,7 +51,7 @@ public struct GitHubCopilotCodeSuggestion: Codable, Equatable {
     public var displayText: String
 }
 
-public func editorConfiguration() -> JSONValue {
+public func editorConfiguration(includeMCP: Bool) -> JSONValue {
     var proxyAuthorization: String? {
         let username = UserDefaults.shared.value(for: \.gitHubCopilotProxyUsername)
         if username.isEmpty { return nil }
@@ -82,10 +83,35 @@ public func editorConfiguration() -> JSONValue {
         return .hash([ "uri": .string(enterpriseURI) ])
     }
 
+    var mcp: JSONValue? {
+        let mcpConfig = UserDefaults.shared.value(for: \.gitHubCopilotMCPConfig)
+        return JSONValue.string(mcpConfig)
+    }
+
+    var customInstructions: JSONValue? {
+        let instructions = UserDefaults.shared.value(for: \.globalCopilotInstructions)
+        return .string(instructions)
+    }
+
     var d: [String: JSONValue] = [:]
     if let http { d["http"] = http }
     if let authProvider { d["github-enterprise"] = authProvider }
+    if (includeMCP && mcp != nil) || customInstructions != nil {
+        var github: [String: JSONValue] = [:]
+        var copilot: [String: JSONValue] = [:]
+        if includeMCP {
+            copilot["mcp"] = mcp
+        }
+        copilot["globalCopilotInstructions"] = customInstructions
+        github["copilot"] = .hash(copilot)
+        d["github"] = .hash(github)
+    }
     return .hash(d)
+}
+
+public enum SignInInitiateStatus: String, Codable {
+    case promptUserDeviceFlow = "PromptUserDeviceFlow"
+    case alreadySignedIn = "AlreadySignedIn"
 }
 
 enum GitHubCopilotRequest {
@@ -95,7 +121,7 @@ enum GitHubCopilotRequest {
         }
 
         var request: ClientRequest {
-            .custom("getVersion", .hash([:]))
+            .custom("getVersion", .hash([:]), ClientRequest.NullHandler)
         }
     }
 
@@ -106,21 +132,30 @@ enum GitHubCopilotRequest {
         }
 
         var request: ClientRequest {
-            .custom("checkStatus", .hash([:]))
+            .custom("checkStatus", .hash([:]), ClientRequest.NullHandler)
+        }
+    }
+    
+    struct CheckQuota: GitHubCopilotRequestType {
+        typealias Response = GitHubCopilotQuotaInfo
+
+        var request: ClientRequest {
+            .custom("checkQuota", .hash([:]), ClientRequest.NullHandler)
         }
     }
 
     struct SignInInitiate: GitHubCopilotRequestType {
         struct Response: Codable {
-            var verificationUri: String
-            var status: String
-            var userCode: String
-            var expiresIn: Int
-            var interval: Int
+            var status: SignInInitiateStatus
+            var userCode: String?
+            var verificationUri: String?
+            var expiresIn: Int?
+            var interval: Int?
+            var user: String?
         }
 
         var request: ClientRequest {
-            .custom("signInInitiate", .hash([:]))
+            .custom("signInInitiate", .hash([:]), ClientRequest.NullHandler)
         }
     }
 
@@ -135,7 +170,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             .custom("signInConfirm", .hash([
                 "userCode": .string(userCode),
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -145,7 +180,7 @@ enum GitHubCopilotRequest {
         }
 
         var request: ClientRequest {
-            .custom("signOut", .hash([:]))
+            .custom("signOut", .hash([:]), ClientRequest.NullHandler)
         }
     }
 
@@ -161,7 +196,7 @@ enum GitHubCopilotRequest {
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
             return .custom("getCompletions", .hash([
                 "doc": dict,
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -177,7 +212,7 @@ enum GitHubCopilotRequest {
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
             return .custom("getCompletionsCycling", .hash([
                 "doc": dict,
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -227,7 +262,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             let data = (try? JSONEncoder().encode(doc)) ?? Data()
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
-            return .custom("textDocument/inlineCompletion", dict)
+            return .custom("textDocument/inlineCompletion", dict, ClientRequest.NullHandler)
         }
     }
 
@@ -243,7 +278,7 @@ enum GitHubCopilotRequest {
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
             return .custom("getPanelCompletions", .hash([
                 "doc": dict,
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -255,7 +290,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             .custom("notifyShown", .hash([
                 "uuid": .string(completionUUID),
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -274,7 +309,7 @@ enum GitHubCopilotRequest {
                 dict["acceptedLength"] = .number(Double(acceptedLength))
             }
 
-            return .custom("notifyAccepted", .hash(dict))
+            return .custom("notifyAccepted", .hash(dict), ClientRequest.NullHandler)
         }
     }
 
@@ -286,7 +321,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             .custom("notifyRejected", .hash([
                 "uuids": .array(completionUUIDs.map(JSONValue.string)),
-            ]))
+            ]), ClientRequest.NullHandler)
         }
     }
 
@@ -300,7 +335,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             let data = (try? JSONEncoder().encode(params)) ?? Data()
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
-            return .custom("conversation/create", dict)
+            return .custom("conversation/create", dict, ClientRequest.NullHandler)
         }
     }
 
@@ -314,7 +349,7 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             let data = (try? JSONEncoder().encode(params)) ?? Data()
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
-            return .custom("conversation/turn", dict)
+            return .custom("conversation/turn", dict, ClientRequest.NullHandler)
         }
     }
 
@@ -328,7 +363,61 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             let data = (try? JSONEncoder().encode(params)) ?? Data()
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
-            return .custom("conversation/rating", dict)
+            return .custom("conversation/rating", dict, ClientRequest.NullHandler)
+        }
+    }
+    
+    // MARK: Conversation templates
+
+    struct GetTemplates: GitHubCopilotRequestType {
+        typealias Response = Array<ChatTemplate>
+
+        var request: ClientRequest {
+            .custom("conversation/templates", .hash([:]), ClientRequest.NullHandler)
+        }
+    }
+
+    struct CopilotModels: GitHubCopilotRequestType {
+        typealias Response = Array<CopilotModel>
+
+        var request: ClientRequest {
+            .custom("copilot/models", .hash([:]), ClientRequest.NullHandler)
+        }
+    }
+    
+    // MARK: MCP Tools
+    
+    struct UpdatedMCPToolsStatus: GitHubCopilotRequestType {
+        typealias Response = Array<MCPServerToolsCollection>
+        
+        var params: UpdateMCPToolsStatusParams
+
+        var request: ClientRequest {
+            let data = (try? JSONEncoder().encode(params)) ?? Data()
+            let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
+            return .custom("mcp/updateToolsStatus", dict, ClientRequest.NullHandler)
+        }
+    }
+    
+    // MARK: - Conversation Agents
+    
+    struct GetAgents: GitHubCopilotRequestType {
+        typealias Response = Array<ChatAgent>
+
+        var request: ClientRequest {
+            .custom("conversation/agents", .hash([:]), ClientRequest.NullHandler)
+        }
+    }
+
+    struct RegisterTools: GitHubCopilotRequestType {
+        struct Response: Codable {}
+
+        var params: RegisterToolsParams
+
+        var request: ClientRequest {
+            let data = (try? JSONEncoder().encode(params)) ?? Data()
+            let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
+            return .custom("conversation/registerTools", dict, ClientRequest.NullHandler)
         }
     }
 
@@ -342,7 +431,21 @@ enum GitHubCopilotRequest {
         var request: ClientRequest {
             let data = (try? JSONEncoder().encode(params)) ?? Data()
             let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
-            return .custom("conversation/copyCode", dict)
+            return .custom("conversation/copyCode", dict, ClientRequest.NullHandler)
+        }
+    }
+    
+    // MARK: Telemetry
+
+    struct TelemetryException: GitHubCopilotRequestType {
+        struct Response: Codable {}
+
+        var params: TelemetryExceptionParams
+
+        var request: ClientRequest {
+            let data = (try? JSONEncoder().encode(params)) ?? Data()
+            let dict = (try? JSONDecoder().decode(JSONValue.self, from: data)) ?? .hash([:])
+            return .custom("telemetry/exception", dict, ClientRequest.NullHandler)
         }
     }
 }
@@ -354,7 +457,6 @@ public enum GitHubCopilotNotification {
     public struct StatusNotification: Codable {
         public enum StatusKind : String, Codable {
             case normal = "Normal"
-            case inProgress = "InProgress"
             case error = "Error"
             case warning = "Warning"
             case inactive = "Inactive"
@@ -363,8 +465,6 @@ public enum GitHubCopilotNotification {
                 switch self {
                 case .normal:
                         .normal
-                case .inProgress:
-                        .inProgress
                 case .error:
                         .error
                 case .warning:
@@ -375,12 +475,32 @@ public enum GitHubCopilotNotification {
             }
         }
 
-        public var status: StatusKind
-        public var message: String
+        public var kind: StatusKind
+        public var busy: Bool
+        public var message: String?
 
         public static func decode(fromParams params: JSONValue?) -> StatusNotification? {
             try? JSONDecoder().decode(Self.self, from: (try? JSONEncoder().encode(params)) ?? Data())
         }
     }
 
+    
+    public struct MCPRuntimeNotification: Codable {
+        public enum MCPRuntimeLogLevel: String, Codable {
+            case Info = "info"
+            case Warning = "warning"
+            case Error = "error"
+        }
+
+        public var level: MCPRuntimeLogLevel
+        public var message: String
+        public var server: String
+        public var tool: String?
+        public var time: Double
+        
+        public static func decode(fromParams params: JSONValue?) -> MCPRuntimeNotification? {
+            try? JSONDecoder().decode(Self.self, from: (try? JSONEncoder().encode(params)) ?? Data())
+        }
+    }
+    
 }

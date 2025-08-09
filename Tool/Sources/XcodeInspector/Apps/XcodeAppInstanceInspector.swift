@@ -401,6 +401,11 @@ extension XcodeAppInstanceInspector {
         }
         return updated
     }
+    
+    // The screen that Xcode App located at
+    public var appScreen: NSScreen? {
+        appElement.focusedWindow?.maxIntersectionScreen
+    }
 }
 
 public extension AXUIElement {
@@ -446,5 +451,32 @@ public extension AXUIElement {
             return .continueSearching
         }
         return tabBars
+    }
+    
+    var maxIntersectionScreen: NSScreen? {
+        guard let rect = rect else { return nil }
+        
+        var bestScreen: NSScreen?
+        var maxIntersectionArea: CGFloat = 0
+        
+        for screen in NSScreen.screens {
+            // Skip screens that are in full-screen mode
+            // Full-screen detection: visible frame equals total frame (no menu bar/dock)
+            if screen.frame == screen.visibleFrame {
+                continue
+            }
+            
+            // Calculate intersection area between Xcode frame and screen frame
+            let intersection = rect.intersection(screen.frame)
+            let intersectionArea = intersection.width * intersection.height
+            
+            // Update best screen if this intersection is larger
+            if intersectionArea > maxIntersectionArea {
+                maxIntersectionArea = intersectionArea
+                bestScreen = screen
+            }
+        }
+        
+        return bestScreen
     }
 }

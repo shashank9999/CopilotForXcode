@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import XcodeInspector
 
 public struct WidgetLocation: Equatable {
     struct PanelLocation: Equatable {
@@ -135,16 +136,10 @@ enum UpdateLocationStrategy {
             }()
             let alignPanelTopToAnchor = fixedAlignment ?? (y > activeScreen.frame.midY)
 
+            let chatPanelFrame = getChatPanelFrame(mainScreen)
+            
             if putPanelToTheRight {
                 let anchorFrame = proposedAnchorFrameOnTheRightSide
-                let panelFrame = CGRect(
-                    x: proposedPanelX,
-                    y: alignPanelTopToAnchor
-                        ? anchorFrame.maxY - Style.panelHeight
-                        : anchorFrame.minY - editorFrameExpendedSize.height,
-                    width: Style.panelWidth,
-                    height: Style.panelHeight
-                )
                 let tabFrame = CGRect(
                     x: anchorFrame.origin.x,
                     y: alignPanelTopToAnchor
@@ -158,7 +153,7 @@ enum UpdateLocationStrategy {
                     widgetFrame: widgetFrameOnTheRightSide,
                     tabFrame: tabFrame,
                     defaultPanelLocation: .init(
-                        frame: panelFrame,
+                        frame: chatPanelFrame,
                         alignPanelTop: alignPanelTopToAnchor
                     ),
                     suggestionPanelLocation: nil
@@ -197,14 +192,6 @@ enum UpdateLocationStrategy {
 
                 if putAnchorToTheLeft {
                     let anchorFrame = proposedAnchorFrameOnTheLeftSide
-                    let panelFrame = CGRect(
-                        x: proposedPanelX,
-                        y: alignPanelTopToAnchor
-                            ? anchorFrame.maxY - Style.panelHeight
-                            : anchorFrame.minY - editorFrameExpendedSize.height,
-                        width: Style.panelWidth,
-                        height: Style.panelHeight
-                    )
                     let tabFrame = CGRect(
                         x: anchorFrame.origin.x,
                         y: alignPanelTopToAnchor
@@ -217,23 +204,13 @@ enum UpdateLocationStrategy {
                         widgetFrame: widgetFrameOnTheLeftSide,
                         tabFrame: tabFrame,
                         defaultPanelLocation: .init(
-                            frame: panelFrame,
+                            frame: chatPanelFrame,
                             alignPanelTop: alignPanelTopToAnchor
                         ),
                         suggestionPanelLocation: nil
                     )
                 } else {
                     let anchorFrame = proposedAnchorFrameOnTheRightSide
-                    let panelFrame = CGRect(
-                        x: anchorFrame.maxX - Style.panelWidth,
-                        y: alignPanelTopToAnchor
-                            ? anchorFrame.maxY - Style.panelHeight - Style.widgetHeight
-                            - Style.widgetPadding
-                            : anchorFrame.maxY + Style.widgetPadding
-                            - editorFrameExpendedSize.height,
-                        width: Style.panelWidth,
-                        height: Style.panelHeight
-                    )
                     let tabFrame = CGRect(
                         x: anchorFrame.minX - Style.widgetPadding - Style.widgetWidth,
                         y: anchorFrame.origin.y,
@@ -244,7 +221,7 @@ enum UpdateLocationStrategy {
                         widgetFrame: widgetFrameOnTheRightSide,
                         tabFrame: tabFrame,
                         defaultPanelLocation: .init(
-                            frame: panelFrame,
+                            frame: chatPanelFrame,
                             alignPanelTop: alignPanelTopToAnchor
                         ),
                         suggestionPanelLocation: nil
@@ -341,6 +318,42 @@ enum UpdateLocationStrategy {
         }
 
         return selectionFrame
+    }
+    
+    static func getChatPanelFrame(_ screen: NSScreen? = nil) -> CGRect {
+        let screen = screen ??  NSScreen.main ?? NSScreen.screens.first!
+        
+        let visibleScreenFrame = screen.visibleFrame
+        
+        // Default Frame
+        let width = min(Style.panelWidth, visibleScreenFrame.width * 0.3)
+        let height = visibleScreenFrame.height
+        let x = visibleScreenFrame.maxX - width
+        let y = visibleScreenFrame.minY
+        
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+    
+    static func getAttachedChatPanelFrame(_ screen: NSScreen, workspaceWindowElement: AXUIElement) -> CGRect {
+        guard let xcodeScreen = workspaceWindowElement.maxIntersectionScreen,
+              let xcodeRect = workspaceWindowElement.rect,
+              let mainDisplayScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero })
+        else {
+            return getChatPanelFrame()
+        }
+        
+        let minWidth = Style.minChatPanelWidth
+        let visibleXcodeScreenFrame = xcodeScreen.visibleFrame
+        
+        let width = max(visibleXcodeScreenFrame.maxX - xcodeRect.maxX, minWidth)
+        let height = xcodeRect.height
+        let x = visibleXcodeScreenFrame.maxX - width
+        
+        // AXUIElement coordinates: Y=0 at top-left
+        // NSWindow coordinates: Y=0 at bottom-left
+        let y = mainDisplayScreen.frame.maxY - xcodeRect.maxY + mainDisplayScreen.frame.minY
+        
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 }
 

@@ -4,9 +4,13 @@ import SwiftUI
 public struct CopyButton: View {
     public var copy: () -> Void
     @State var isCopied = false
+    private var foregroundColor: Color?
+    private var fontWeight: Font.Weight? 
     
-    public init(copy: @escaping () -> Void) {
+    public init(copy: @escaping () -> Void, foregroundColor: Color? = nil, fontWeight: Font.Weight? = nil) { 
         self.copy = copy
+        self.foregroundColor = foregroundColor
+        self.fontWeight = fontWeight 
     }
     
     public var body: some View {
@@ -26,14 +30,11 @@ public struct CopyButton: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 14, height: 14)
-                .frame(width: 20, height: 20, alignment: .center)
-                .foregroundColor(.secondary)
-                .background(
-                    .regularMaterial,
-                    in: RoundedRectangle(cornerRadius: 4, style: .circular)
-                )
+                .foregroundColor(foregroundColor ?? .secondary)
+                .conditionalFontWeight(fontWeight)
                 .padding(4)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(HoverButtonStyle(padding: 0))
+        .help("Copy")
     }
 }

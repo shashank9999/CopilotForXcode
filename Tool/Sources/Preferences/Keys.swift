@@ -116,6 +116,11 @@ public struct UserDefaultPreferenceKeys {
         defaultValue: false,
         key: "ExtensionPermissionShown"
     )
+    
+    public let capturePermissionShown = PreferenceKey(
+        defaultValue: false,
+        key: "CapturePermissionShown"
+    )
 }
 
 // MARK: - Prompt to Code
@@ -229,6 +234,10 @@ public extension UserDefaultPreferenceKeys {
     var isSuggestionTypeInTheMiddleEnabled: PreferenceKey<Bool> {
         .init(defaultValue: true, key: "IsSuggestionTypeInTheMiddleEnabled")
     }
+    
+    var clsWarningDismissedUntilRelaunch: PreferenceKey<Bool> {
+        .init(defaultValue: false, key: "CLSWarningDismissedUntilRelaunch")
+    }
 }
 
 // MARK: - Chat
@@ -236,7 +245,7 @@ public extension UserDefaultPreferenceKeys {
 public extension UserDefaultPreferenceKeys {
 
     var chatFontSize: PreferenceKey<Double> {
-        .init(defaultValue: 12, key: "ChatFontSize")
+        .init(defaultValue: 13, key: "ChatFontSize")
     }
 
     var chatCodeFontSize: PreferenceKey<Double> {
@@ -286,6 +295,22 @@ public extension UserDefaultPreferenceKeys {
     
     var keepFloatOnTopIfChatPanelAndXcodeOverlaps: PreferenceKey<Bool> {
         .init(defaultValue: true, key: "KeepFloatOnTopIfChatPanelAndXcodeOverlaps")
+    }
+
+    var enableCurrentEditorContext: PreferenceKey<Bool> {
+        .init(defaultValue: true, key: "EnableCurrentEditorContext")
+    }
+    
+    var chatResponseLocale: PreferenceKey<String> {
+        .init(defaultValue: "en", key: "ChatResponseLocale")
+    }
+
+    var globalCopilotInstructions: PreferenceKey<String> {
+        .init(defaultValue: "", key: "GlobalCopilotInstructions")
+    }
+    
+    var autoAttachChatToXcode: PreferenceKey<Bool> {
+        .init(defaultValue: true, key: "AutoAttachChatToXcode")
     }
 }
 
@@ -545,6 +570,14 @@ public extension UserDefaultPreferenceKeys {
 
     var gitHubCopilotProxyPassword: PreferenceKey<String> {
         .init(defaultValue: "", key: "GitHubCopilotProxyPassword")
+    }
+    
+    var gitHubCopilotMCPConfig: PreferenceKey<String> {
+        .init(defaultValue: "", key: "GitHubCopilotMCPConfig")
+    }
+    
+    var gitHubCopilotMCPUpdatedStatus: PreferenceKey<String> {
+        .init(defaultValue: "", key: "GitHubCopilotMCPUpdatedStatus")
     }
 
     var gitHubCopilotEnterpriseURI: PreferenceKey<String> {

@@ -1,4 +1,5 @@
 import Foundation
+import GitHubCopilotService
 import Logger
 import Status
 
@@ -48,11 +49,29 @@ public class XPCExtensionService {
             }
         }
     }
+    
+    public func getXPCCLSVersion() async throws -> String? {
+        try await withXPCServiceConnected {
+            service, continuation in
+            service.getXPCCLSVersion { version in
+                continuation.resume(version)
+            }
+        }
+    }
 
     public func getXPCServiceAccessibilityPermission() async throws -> ObservedAXStatus {
         try await withXPCServiceConnected {
             service, continuation in
             service.getXPCServiceAccessibilityPermission { isGranted in
+                continuation.resume(isGranted)
+            }
+        }
+    }
+    
+    public func getXPCServiceExtensionPermission() async throws -> ExtensionPermissionStatus {
+        try await withXPCServiceConnected {
+            service, continuation in
+            service.getXPCServiceExtensionPermission { isGranted in
                 continuation.resume(isGranted)
             }
         }
@@ -139,11 +158,17 @@ public class XPCExtensionService {
         }
     }
 
-    public func openChat(editorContent: EditorContent) async throws -> UpdatedContent? {
-        try await suggestionRequest(
-            editorContent,
-            { $0.openChat }
-        )
+    public func openChat() async throws {
+        try await withXPCServiceConnected {
+            service, continuation in
+            service.openChat { error in
+                if let error {
+                    continuation.reject(error)
+                    return
+                }
+                continuation.resume(())
+            }
+        } as Void
     }
 
     public func promptToCode(editorContent: EditorContent) async throws -> UpdatedContent? {
@@ -162,7 +187,6 @@ public class XPCExtensionService {
             { service in { service.customCommand(id: id, editorContent: $0, withReply: $1) } }
         )
     }
-
 
     public func quitService() async throws {
         try await withXPCServiceConnectedWithoutLaunching {
@@ -308,5 +332,110 @@ extension XPCExtensionService {
             }
         }
     }
-}
 
+    @XPCServiceActor
+    public func getXcodeInspectorData() async throws -> XcodeInspectorData {
+        return try await withXPCServiceConnected {
+            service, continuation in
+            service.getXcodeInspectorData { data, error in
+                if let error {
+                    continuation.reject(error)
+                    return
+                }
+                
+                guard let data else {
+                    continuation.reject(NoDataError())
+                    return
+                }
+                
+                do {
+                    let inspectorData = try JSONDecoder().decode(XcodeInspectorData.self, from: data)
+                    continuation.resume(inspectorData)
+                } catch {
+                    continuation.reject(error)
+                }
+            }
+        }
+    }
+
+    @XPCServiceActor
+    public func getAvailableMCPServerToolsCollections() async throws -> [MCPServerToolsCollection]? {
+        return try await withXPCServiceConnected {
+            service, continuation in
+            service.getAvailableMCPServerToolsCollections { data in
+                guard let data else {
+                    continuation.resume(nil)
+                    return
+                }
+
+                do {
+                    let tools = try JSONDecoder().decode([MCPServerToolsCollection].self, from: data)
+                    continuation.resume(tools)
+                } catch {
+                    continuation.reject(error)
+                }
+            }
+        }
+    }
+
+    @XPCServiceActor
+    public func updateMCPServerToolsStatus(_ update: [UpdateMCPToolsStatusServerCollection]) async throws {
+        return try await withXPCServiceConnected {
+            service, continuation in
+            do {
+                let data = try JSONEncoder().encode(update)
+                service.updateMCPServerToolsStatus(tools: data)
+                continuation.resume(())
+            } catch {
+                continuation.reject(error)
+            }
+        }
+    }
+    
+    @XPCServiceActor
+    public func getCopilotFeatureFlags() async throws -> FeatureFlags? {
+        return try await withXPCServiceConnected {
+            service, continuation in
+            service.getCopilotFeatureFlags { data in
+                guard let data else {
+                    continuation.resume(nil)
+                    return
+                }
+
+                do {
+                    let tools = try JSONDecoder().decode(FeatureFlags.self, from: data)
+                    continuation.resume(tools)
+                } catch {
+                    continuation.reject(error)
+                }
+            }
+        }
+    }
+    
+    @XPCServiceActor
+    public func signOutAllGitHubCopilotService() async throws {
+        return try await withXPCServiceConnected {
+            service, _ in service.signOutAllGitHubCopilotService()
+        }
+    }
+    
+    @XPCServiceActor
+    public func getXPCServiceAuthStatus() async throws -> AuthStatus? {
+        return try await withXPCServiceConnected {
+            service, continuation in
+            service.getXPCServiceAuthStatus { data in
+                guard let data else {
+                    continuation.resume(nil)
+                    return
+                }
+
+                do {
+                    let authStatus = try JSONDecoder().decode(AuthStatus.self, from: data)
+                    continuation.resume(authStatus)
+                } catch {
+                    continuation.reject(error)
+                }
+            }
+        }
+    }
+}

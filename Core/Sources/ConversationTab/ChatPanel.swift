@@ -1,28 +1,103 @@
 import AppKit
 import Combine
 import ComposableArchitecture
+import ConversationServiceProvider
 import MarkdownUI
 import ChatAPIService
 import SharedUIComponents
 import SwiftUI
 import ChatService
+import SwiftUIFlowLayout
+import XcodeInspector
+import ChatTab
+import Workspace
+import Persist
+import UniformTypeIdentifiers
 
-private let r: Double = 8
+private let r: Double = 4
 
 public struct ChatPanel: View {
-    let chat: StoreOf<Chat>
+    @Perception.Bindable var chat: StoreOf<Chat>
     @Namespace var inputAreaNamespace
 
     public var body: some View {
-        VStack(spacing: 0) {
-            ChatPanelMessages(chat: chat)
-            Divider()
-            ChatPanelInputArea(chat: chat)
+        WithPerceptionTracking {
+            VStack(spacing: 0) {
+                
+                if chat.history.isEmpty {
+                    VStack {
+                        Spacer()
+                        Instruction(isAgentMode: $chat.isAgentMode)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding(.trailing, 16)
+                } else {
+                    ChatPanelMessages(chat: chat)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Chat Messages Group")
+                    
+                    if let _ = chat.history.last?.followUp {
+                        ChatFollowUp(chat: chat)
+                            .padding(.trailing, 16)
+                            .padding(.vertical, 8)
+                    }
+                }
+                
+                if chat.fileEditMap.count > 0 {
+                    WorkingSetView(chat: chat)
+                        .padding(.trailing, 16)
+                }
+                
+                ChatPanelInputArea(chat: chat)
+                    .padding(.trailing, 16)
+            }
+            .padding(.leading, 16)
+            .padding(.bottom, 16)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onAppear {
+                chat.send(.appear)
+            }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                onFileDrop(providers)
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { chat.send(.appear) }
+    }
+    
+    private func onFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+                    let url: URL? = {
+                        if let data = item as? Data {
+                            return URL(dataRepresentation: data, relativeTo: nil)
+                        } else if let url = item as? URL {
+                            return url
+                        }
+                        return nil
+                    }()
+                    
+                    guard let url else { return }
+                    if let isValidFile = try? WorkspaceFile.isValidFile(url), isValidFile {
+                        DispatchQueue.main.async {
+                            let fileReference = FileReference(url: url, isCurrentEditor: false)
+                            chat.send(.addSelectedFile(fileReference))
+                        }
+                    } else if let data = try? Data(contentsOf: url),
+                        ["png", "jpeg", "jpg", "bmp", "gif", "tiff", "tif", "webp"].contains(url.pathExtension.lowercased()) {
+                        DispatchQueue.main.async {
+                            chat.send(.addSelectedImage(ImageReference(data: data, fileUrl: url)))
+                        }
+                    }
+                }
+            }
+        }
+        
+        return true
     }
 }
+
+
 
 private struct ScrollViewOffsetPreferenceKey: PreferenceKey {
     static var defaultValue = CGFloat.zero
@@ -60,10 +135,6 @@ struct ChatPanelMessages: View {
                 GeometryReader { listGeo in
                     List {
                         Group {
-                            Spacer(minLength: 12)
-                                .id(topID)
-
-                            Instruction(chat: chat)
 
                             ChatHistory(chat: chat)
                                 .listItemTint(.clear)
@@ -94,12 +165,12 @@ struct ChatPanelMessages: View {
                             if #available(macOS 13.0, *) {
                                 view
                                     .listRowSeparator(.hidden)
-                                    .listSectionSeparator(.hidden)
                             } else {
                                 view
                             }
                         }
                     }
+                    .padding(.leading, -8)
                     .listStyle(.plain)
                     .listRowBackground(EmptyView())
                     .modify { view in
@@ -121,9 +192,6 @@ struct ChatPanelMessages: View {
                     .onPreferenceChange(ScrollViewOffsetPreferenceKey.self) { value in
                         scrollOffset = value
                         updatePinningState()
-                    }
-                    .overlay(alignment: .bottom) {
-                        StopRespondingButton(chat: chat)
                     }
                     .overlay(alignment: .bottomTrailing) {
                         scrollToBottomButton(proxy: proxy)
@@ -190,8 +258,8 @@ struct ChatPanelMessages: View {
                 proxy.scrollTo(bottomID, anchor: .bottom)
             }
         }) {
-            Image(systemName: "arrow.down")
-                .padding(4)
+            Image(systemName: "chevron.down")
+                .padding(8)
                 .background {
                     Circle()
                         .fill(.thickMaterial)
@@ -201,11 +269,12 @@ struct ChatPanelMessages: View {
                     Circle().stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                 }
                 .foregroundStyle(.secondary)
-                .padding(4)
         }
+        .buttonStyle(HoverButtonStyle(padding: 0))
+        .padding(4)
         .keyboardShortcut(.downArrow, modifiers: [.command])
         .opacity(isScrollToBottomButtonDisplayed ? 1 : 0)
-        .buttonStyle(.plain)
+        .help("Scroll Down")
     }
 
     struct ExtraSpacingInResponding: View {
@@ -240,6 +309,8 @@ struct ChatPanelMessages: View {
                                     scrollToBottom()
                                 }
                             }
+                        } else {
+                            Task { pinnedToBottom = false }
                         }
                     }
                     .onChange(of: chat.history.last) { _ in
@@ -271,9 +342,18 @@ struct ChatHistory: View {
 
     var body: some View {
         WithPerceptionTracking {
-            ForEach(chat.history, id: \.id) { message in
-                WithPerceptionTracking {
-                    ChatHistoryItem(chat: chat, message: message).id(message.id)
+            ForEach(Array(chat.history.enumerated()), id: \.element.id) { index, message in
+                VStack(spacing: 0) {
+                    WithPerceptionTracking {
+                        ChatHistoryItem(chat: chat, message: message)
+                            .id(message.id)
+                            .padding(.top, 4)
+                            .padding(.bottom, 12)
+                    }
+                    
+                    // add divider between messages
+                    if message.role != .ignored && index < chat.history.count - 1 {
+                        Divider()                    }
                 }
             }
         }
@@ -289,30 +369,24 @@ struct ChatHistoryItem: View {
             let text = message.text
             switch message.role {
             case .user:
-                UserMessage(id: message.id, text: text, chat: chat)
-                    .listRowInsets(EdgeInsets(
-                        top: 0,
-                        leading: -8,
-                        bottom: 0,
-                        trailing: -8
-                    ))
-                    .padding(.vertical, 4)
+                UserMessage(
+                    id: message.id,
+                    text: text,
+                    imageReferences: message.imageReferences,
+                    chat: chat
+                )
             case .assistant:
                 BotMessage(
                     id: message.id,
                     text: text,
                     references: message.references,
-                    chat: chat
+                    followUp: message.followUp,
+                    errorMessages: message.errorMessages,
+                    chat: chat,
+                    steps: message.steps,
+                    editAgentRounds: message.editAgentRounds,
+                    panelMessages: message.panelMessages
                 )
-                .listRowInsets(EdgeInsets(
-                    top: 0,
-                    leading: -8,
-                    bottom: 0,
-                    trailing: -8
-                ))
-                .padding(.vertical, 4)
-            case .tool:
-                FunctionMessage(id: message.id, text: text)
             case .ignored:
                 EmptyView()
             }
@@ -320,39 +394,66 @@ struct ChatHistoryItem: View {
     }
 }
 
-private struct StopRespondingButton: View {
+struct ChatFollowUp: View {
     let chat: StoreOf<Chat>
-
+    @AppStorage(\.chatFontSize) var chatFontSize
+    
     var body: some View {
         WithPerceptionTracking {
-            if chat.isReceivingMessage {
-                Button(action: {
-                    chat.send(.stopRespondingButtonTapped)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
-                        Text("Stop Responding")
+            HStack {
+                if let followUp = chat.history.last?.followUp {
+                    Button(action: {
+                        chat.send(.followUpButtonClicked(UUID().uuidString, followUp.message))
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(.blue)
+                            
+                            Text(followUp.message)
+                                .font(.system(size: chatFontSize))
+                                .foregroundColor(.blue)
+                        }
                     }
-                    .padding(8)
-                    .background(
-                        .regularMaterial,
-                        in: RoundedRectangle(cornerRadius: r, style: .continuous)
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: r, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    .buttonStyle(.plain)
+                    .onHover { isHovered in
+                        if isHovered {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
                     }
                 }
-                .buttonStyle(.borderless)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 8)
-                .opacity(chat.isReceivingMessage ? 1 : 0)
-                .disabled(!chat.isReceivingMessage)
-                .transformEffect(.init(
-                    translationX: 0,
-                    y: chat.isReceivingMessage ? 0 : 20
-                ))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct ChatCLSError: View {
+    let chat: StoreOf<Chat>
+    @AppStorage(\.chatFontSize) var chatFontSize
+    
+    var body: some View {
+        WithPerceptionTracking {
+            HStack(alignment: .top) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.blue)
+                    .padding(.leading, 8)
+                
+                Text("Monthly chat limit reached. [Upgrade now](https://github.com/github-copilot/signup/copilot_individual) or wait until your usage resets.")
+                    .font(.system(size: chatFontSize))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+            .background(
+                RoundedCorners(tl: r, tr: r, bl: 0, br: 0)
+                    .fill(.ultraThickMaterial)
+            )
+            .overlay(
+                RoundedCorners(tl: r, tr: r, bl: 0, br: 0)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+            .padding(.top, 4)
         }
     }
 }
@@ -363,11 +464,9 @@ struct ChatPanelInputArea: View {
 
     var body: some View {
         HStack {
-            clearButton
             InputAreaTextEditor(chat: chat, focusedField: $focusedField)
         }
-        .padding(8)
-        .background(.ultraThickMaterial)
+        .background(Color.clear)
     }
 
     @MainActor
@@ -392,40 +491,117 @@ struct ChatPanelInputArea: View {
         }
         .buttonStyle(.plain)
     }
+    
+    enum ShowingType { case template, agent }
 
     struct InputAreaTextEditor: View {
         @Perception.Bindable var chat: StoreOf<Chat>
         var focusedField: FocusState<Chat.State.Field?>.Binding
+        @State var cancellable = Set<AnyCancellable>()
+        @State private var isFilePickerPresented = false
+        @State private var allFiles: [FileReference]? = nil
+        @State private var filteredTemplates: [ChatTemplate] = []
+        @State private var filteredAgent: [ChatAgent] = []
+        @State private var showingTemplates = false
+        @State private var dropDownShowingType: ShowingType? = nil
+
+        @AppStorage(\.enableCurrentEditorContext) var enableCurrentEditorContext: Bool
+        @State private var isCurrentEditorContextEnabled: Bool = UserDefaults.shared.value(
+            for: \.enableCurrentEditorContext
+        )
 
         var body: some View {
             WithPerceptionTracking {
-                HStack(spacing: 0) {
-                    AutoresizingCustomTextEditor(
-                        text: $chat.typedMessage,
-                        font: .systemFont(ofSize: 14),
-                        isEditable: true,
-                        maxHeight: 400,
-                        onSubmit: {
-                            chat.send(.sendButtonTapped(UUID().uuidString))
-                        },
-                        completions: chatAutoCompletion
-                    )
-                    .focused(focusedField, equals: .textField)
-                    .bind($chat.focusedField, to: focusedField)
-                    .padding(8)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    Button(action: {
-                        chat.send(.sendButtonTapped(UUID().uuidString))
-                    }) {
-                        Image(systemName: "paperplane.fill")
-                            .padding(8)
+                VStack(spacing: 0) {
+                    chatContextView
+                    
+                    if isFilePickerPresented {
+                        FilePicker(
+                            allFiles: $allFiles,
+                            workspaceURL: chat.workspaceURL,
+                            onSubmit: { file in
+                                chat.send(.addSelectedFile(file))
+                            },
+                            onExit: {
+                                isFilePickerPresented = false
+                                focusedField.wrappedValue = .textField
+                            }
+                        )
+                        .onAppear() {
+                            allFiles = ContextUtils.getFilesFromWorkspaceIndex(workspaceURL: chat.workspaceURL)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(chat.isReceivingMessage)
-                    .keyboardShortcut(KeyEquivalent.return, modifiers: [])
+                    
+                    if !chat.state.attachedImages.isEmpty {
+                        ImagesScrollView(chat: chat)
+                    }
+                    
+                    ZStack(alignment: .topLeading) {
+                        if chat.typedMessage.isEmpty {
+                            Group {
+                                chat.isAgentMode ?
+                                Text("Edit files in your workspace in agent mode") :
+                                Text("Ask Copilot or type / for commands")
+                            }
+                            .font(.system(size: 14))
+                            .foregroundColor(Color(nsColor: .placeholderTextColor))
+                            .padding(8)
+                            .padding(.horizontal, 4)
+                        }
+
+                        HStack(spacing: 0) {
+                            AutoresizingCustomTextEditor(
+                                text: $chat.typedMessage,
+                                font: .systemFont(ofSize: 14),
+                                isEditable: true,
+                                maxHeight: 400,
+                                onSubmit: {
+                                    if (dropDownShowingType == nil) {
+                                        submitChatMessage()
+                                    }
+                                    dropDownShowingType = nil
+                                }
+                            )
+                            .focused(focusedField, equals: .textField)
+                            .bind($chat.focusedField, to: focusedField)
+                            .padding(8)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onChange(of: chat.typedMessage) { newValue in
+                                Task {
+                                    await onTypedMessageChanged(newValue: newValue)
+                                }
+                            }
+                            /// When chat mode changed, the chat tamplate and agent need to be reloaded
+                            .onChange(of: chat.isAgentMode) { _ in
+                                Task {
+                                    await onTypedMessageChanged(newValue: chat.typedMessage)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.top, 4)
+                    
+                    HStack(spacing: 0) {
+                        ModelPicker()
+
+                        Spacer()
+                        
+                        Group {
+                            if chat.isReceivingMessage { stopButton }
+                            else { sendButton }
+                        }
+                        .buttonStyle(HoverButtonStyle(padding: 0))
+                    }
+                    .padding(8)
+                    .padding(.top, -4)
                 }
-                .frame(maxWidth: .infinity)
+                .overlay(alignment: .top) {
+                    dropdownOverlay
+                }
+                .onAppear() {
+                    subscribeToActiveDocumentChangeEvent()
+                }
                 .background {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color(nsColor: .controlBackgroundColor))
@@ -441,43 +617,234 @@ struct ChatPanelInputArea: View {
                         EmptyView()
                     }
                     .keyboardShortcut(KeyEquivalent.return, modifiers: [.shift])
-
+                    .accessibilityHidden(true)
+                    
                     Button(action: {
                         focusedField.wrappedValue = .textField
                     }) {
                         EmptyView()
                     }
                     .keyboardShortcut("l", modifiers: [.command])
+                    .accessibilityHidden(true)
+                }
+            }
+        }
+        
+        private var sendButton: some View {
+            Button(action: {
+                submitChatMessage()
+            }) {
+                Image(systemName: "paperplane.fill")
+                    .padding(4)
+            }
+            .keyboardShortcut(KeyEquivalent.return, modifiers: [])
+            .help("Send")
+        }
+        
+        private var stopButton: some View {
+            Button(action: {
+                chat.send(.stopRespondingButtonTapped)
+            }) {
+                Image(systemName: "stop.circle")
+                    .padding(4)
+            }
+            .help("Stop")
+        }
+        
+        private var dropdownOverlay: some View {
+            Group {
+                if dropDownShowingType != nil {
+                    if dropDownShowingType == .template {
+                        ChatDropdownView(items: $filteredTemplates, prefixSymbol: "/") { template in
+                            chat.typedMessage = "/" + template.id + " "
+                            if template.id == "releaseNotes" {
+                                submitChatMessage()
+                            }
+                        }
+                    } else if dropDownShowingType == .agent {
+                        ChatDropdownView(items: $filteredAgent, prefixSymbol: "@") { agent in
+                            chat.typedMessage = "@" + agent.id + " "
+                        }
+                    }
                 }
             }
         }
 
-        func chatAutoCompletion(text: String, proposed: [String], range: NSRange) -> [String] {
-            guard text.count == 1 else { return [] }
-            let plugins = [String]() // chat.pluginIdentifiers.map { "/\($0)" }
-            let availableFeatures = plugins + [
-                "/exit",
-                "@code",
-                "@sense",
-                "@project",
-                "@web",
-            ]
+        func onTypedMessageChanged(newValue: String) async {
+            if newValue.hasPrefix("/") {
+                filteredTemplates = await chatTemplateCompletion(text: newValue)
+                dropDownShowingType = filteredTemplates.isEmpty ? nil : .template
+            } else if newValue.hasPrefix("@") && !chat.isAgentMode {
+                filteredAgent = await chatAgentCompletion(text: newValue)
+                dropDownShowingType = filteredAgent.isEmpty ? nil : .agent
+            } else {
+                dropDownShowingType = nil
+            }
+        }
+        
+        enum ChatContextButtonType { case imageAttach, contextAttach}
+        
+        private var chatContextView: some View {
+            let buttonItems: [ChatContextButtonType] = [.contextAttach, .imageAttach]
+            let currentEditorItem: [FileReference] = [chat.state.currentEditor].compactMap {
+                $0
+            }
+            let selectedFileItems = chat.state.selectedFiles
+            let chatContextItems: [Any] = buttonItems.map {
+                $0 as ChatContextButtonType
+            } + currentEditorItem + selectedFileItems
+            return FlowLayout(mode: .scrollable, items: chatContextItems, itemSpacing: 4) { item in
+                if let buttonType = item as? ChatContextButtonType {
+                    if buttonType == .imageAttach {
+                        VisionMenuView(chat: chat)
+                    } else if buttonType == .contextAttach {
+                        // File picker button
+                        Button(action: {
+                            withAnimation {
+                                isFilePickerPresented.toggle()
+                                if !isFilePickerPresented {
+                                    focusedField.wrappedValue = .textField
+                                }
+                            }
+                        }) {
+                            Image(systemName: "paperclip")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 16, height: 16)
+                                .padding(4)
+                                .foregroundColor(.primary.opacity(0.85))
+                                .font(Font.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(HoverButtonStyle(padding: 0))
+                        .help("Add Context")
+                        .cornerRadius(6)
+                    }
+                } else if let select = item as? FileReference {
+                    HStack(spacing: 0) {
+                        drawFileIcon(select.url)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 16, height: 16)
+                            .foregroundColor(.primary.opacity(0.85))
+                            .padding(4)
+                            .opacity(select.isCurrentEditor && !isCurrentEditorContextEnabled ? 0.4 : 1.0)
 
-            let result: [String] = availableFeatures
-                .filter { $0.hasPrefix(text) && $0 != text }
-                .compactMap {
-                    guard let index = $0.index(
-                        $0.startIndex,
-                        offsetBy: range.location,
-                        limitedBy: $0.endIndex
-                    ) else { return nil }
-                    return String($0[index...])
+                        Text(select.url.lastPathComponent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundColor(
+                                select.isCurrentEditor && !isCurrentEditorContextEnabled
+                                ? .secondary
+                                : .primary.opacity(0.85)
+                            )
+                            .font(.body)
+                            .opacity(select.isCurrentEditor && !isCurrentEditorContextEnabled ? 0.4 : 1.0)
+                            .help(select.getPathRelativeToHome())
+                        
+                        if select.isCurrentEditor {
+                            Toggle("", isOn: $isCurrentEditorContextEnabled)
+                                .toggleStyle(SwitchToggleStyle(tint: .blue))
+                                .controlSize(.mini)
+                                .padding(.trailing, 4)
+                                .onChange(of: isCurrentEditorContextEnabled) { newValue in
+                                    enableCurrentEditorContext = newValue
+                                }
+                        } else {
+                            Button(action: { chat.send(.removeSelectedFile(select)) }) {
+                                Image(systemName: "xmark")
+                                    .resizable()
+                                    .frame(width: 8, height: 8)
+                                    .foregroundColor(.primary.opacity(0.85))
+                                    .padding(4)
+                            }
+                            .buttonStyle(HoverButtonStyle())
+                        }
+                    }
+                    .background(
+                        Color(nsColor: .windowBackgroundColor).opacity(0.5)
+                    )
+                    .cornerRadius(select.isCurrentEditor ? 99 : r)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: select.isCurrentEditor ? 99 : r)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
                 }
-            return result
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
+
+        func chatTemplateCompletion(text: String) async -> [ChatTemplate] {
+            guard text.count >= 1 && text.first == "/" else { return [] }
+            
+            let prefix = text.dropFirst()
+            var promptTemplates: [ChatTemplate] = []
+            let releaseNotesTemplate: ChatTemplate = .init(
+                id: "releaseNotes",
+                description: "What's New",
+                shortDescription: "What's New",
+                scopes: [.chatPanel, .agentPanel]
+            )
+            
+            if !chat.isAgentMode {
+                promptTemplates = await SharedChatService.shared.loadChatTemplates() ?? []
+            }
+
+            let templates = promptTemplates + [releaseNotesTemplate]
+            let skippedTemplates = [ "feedback", "help" ]
+            
+            return templates.filter {
+                $0.scopes.contains(chat.isAgentMode ? .agentPanel : .chatPanel) &&
+                $0.id.hasPrefix(prefix) &&
+                !skippedTemplates.contains($0.id)
+            }
+        }
+        
+        func chatAgentCompletion(text: String) async -> [ChatAgent] {
+            guard text.count >= 1 && text.first == "@" else { return [] }
+            let prefix = text.dropFirst()
+            var chatAgents = await SharedChatService.shared.loadChatAgents() ?? []
+            
+            if let index = chatAgents.firstIndex(where: { $0.slug == "project" }) {
+                let projectAgent = chatAgents[index]
+                chatAgents[index] = .init(slug: "workspace", name: "workspace", description: "Ask about your workspace", avatarUrl: projectAgent.avatarUrl)
+            }
+            
+            /// only enable the @workspace
+            let includedAgents = ["workspace"]
+            
+            return chatAgents.filter { $0.slug.hasPrefix(prefix) && includedAgents.contains($0.slug) }
+        }
+
+        func subscribeToActiveDocumentChangeEvent() {
+            Publishers.CombineLatest(
+                XcodeInspector.shared.$latestActiveXcode,
+                XcodeInspector.shared.$activeDocumentURL
+                    .removeDuplicates()
+                )
+                .receive(on: DispatchQueue.main)
+                .sink { newXcode, newDocURL in
+                    // First check for realtimeWorkspaceURL if activeWorkspaceURL is nil
+                    if let realtimeURL = newXcode?.realtimeDocumentURL, newDocURL == nil {
+                        if supportedFileExtensions.contains(realtimeURL.pathExtension) {
+                            let currentEditor = FileReference(url: realtimeURL, isCurrentEditor: true)
+                            chat.send(.setCurrentEditor(currentEditor))
+                        }
+                    } else {
+                        if supportedFileExtensions.contains(newDocURL?.pathExtension ?? "") {
+                            let currentEditor = FileReference(url: newDocURL!, isCurrentEditor: true)
+                            chat.send(.setCurrentEditor(currentEditor))
+                        }
+                    }
+                }
+                .store(in: &cancellable)
+        }
+        
+        func submitChatMessage() {
+            chat.send(.sendButtonTapped(UUID().uuidString))
         }
     }
 }
-
 // MARK: - Previews
 
 struct ChatPanel_Preview: PreviewProvider {
@@ -499,10 +866,8 @@ struct ChatPanel_Preview: PreviewProvider {
             """,
             references: [
                 .init(
-                    title: "Hello Hello Hello Hello",
-                    subtitle: "Hi Hi Hi Hi",
-                    uri: "https://google.com",
-                    startLine: nil,
+                    uri: "Hi Hi Hi Hi",
+                    status: .included,
                     kind: .class
                 ),
             ]
@@ -511,18 +876,6 @@ struct ChatPanel_Preview: PreviewProvider {
             id: "7",
             role: .ignored,
             text: "Ignored",
-            references: []
-        ),
-        .init(
-            id: "6",
-            role: .tool,
-            text: """
-            Searching for something...
-            - abc
-            - [def](https://1.com)
-            > hello
-            > hi
-            """,
             references: []
         ),
         .init(
@@ -554,14 +907,17 @@ struct ChatPanel_Preview: PreviewProvider {
             - (void)bar {}
             ```
             """#,
-            references: []
+            references: [],
+            followUp: .init(message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Fusce turpis dolor, malesuada quis fringilla sit amet, placerat at nunc. Suspendisse orci tortor, tempor nec blandit a, malesuada vel tellus. Nunc sed leo ligula. Ut at ligula eget turpis pharetra tristique. Integer luctus leo non elit rhoncus fermentum.", id: "3", type: "type")
         ),
     ]
+    
+    static let chatTabInfo = ChatTabInfo(id: "", workspacePath: "path", username: "name")
 
     static var previews: some View {
         ChatPanel(chat: .init(
             initialState: .init(history: ChatPanel_Preview.history, isReceivingMessage: true),
-            reducer: { Chat(service: ChatService.service()) }
+            reducer: { Chat(service: ChatService.service(for: chatTabInfo)) }
         ))
         .frame(width: 450, height: 1200)
         .colorScheme(.dark)
@@ -572,7 +928,7 @@ struct ChatPanel_EmptyChat_Preview: PreviewProvider {
     static var previews: some View {
         ChatPanel(chat: .init(
             initialState: .init(history: [DisplayedChatMessage](), isReceivingMessage: false),
-            reducer: { Chat(service: ChatService.service()) }
+            reducer: { Chat(service: ChatService.service(for: ChatPanel_Preview.chatTabInfo)) }
         ))
         .padding()
         .frame(width: 450, height: 600)
@@ -584,7 +940,7 @@ struct ChatPanel_InputText_Preview: PreviewProvider {
     static var previews: some View {
         ChatPanel(chat: .init(
             initialState: .init(history: ChatPanel_Preview.history, isReceivingMessage: false),
-            reducer: { Chat(service: ChatService.service()) }
+            reducer: { Chat(service: ChatService.service(for: ChatPanel_Preview.chatTabInfo)) }
         ))
         .padding()
         .frame(width: 450, height: 600)
@@ -602,7 +958,7 @@ struct ChatPanel_InputMultilineText_Preview: PreviewProvider {
                     history: ChatPanel_Preview.history,
                     isReceivingMessage: false
                 ),
-                reducer: { Chat(service: ChatService.service()) }
+                reducer: { Chat(service: ChatService.service(for: ChatPanel_Preview.chatTabInfo)) }
             )
         )
         .padding()
@@ -615,7 +971,7 @@ struct ChatPanel_Light_Preview: PreviewProvider {
     static var previews: some View {
         ChatPanel(chat: .init(
             initialState: .init(history: ChatPanel_Preview.history, isReceivingMessage: true),
-            reducer: { Chat(service: ChatService.service()) }
+            reducer: { Chat(service: ChatService.service(for: ChatPanel_Preview.chatTabInfo)) }
         ))
         .padding()
         .frame(width: 450, height: 600)

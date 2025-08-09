@@ -15,6 +15,7 @@ public extension UserDefaults {
         shared.setupDefaultValue(for: \.realtimeSuggestionToggle)
         shared.setupDefaultValue(for: \.realtimeSuggestionDebounce)
         shared.setupDefaultValue(for: \.suggestionPresentationMode)
+        shared.setupDefaultValue(for: \.autoAttachChatToXcode)
         shared.setupDefaultValue(for: \.widgetColorScheme)
         shared.setupDefaultValue(for: \.customCommands)
         shared.setupDefaultValue(

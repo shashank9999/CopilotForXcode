@@ -3,6 +3,7 @@ import ChatTab
 import ComposableArchitecture
 import Foundation
 import SwiftUI
+import ConversationTab
 
 final class ChatPanelWindow: NSWindow {
     override var canBecomeKey: Bool { true }
@@ -18,13 +19,14 @@ final class ChatPanelWindow: NSWindow {
         minimizeWindow: @escaping () -> Void
     ) {
         self.minimizeWindow = minimizeWindow
+        // Initialize with zero rect initially to prevent flashing
         super.init(
             contentRect: .zero,
-            styleMask: [.resizable, .titled, .miniaturizable, .fullSizeContentView],
+            styleMask: [.resizable, .titled, .miniaturizable, .fullSizeContentView, .closable],
             backing: .buffered,
-            defer: false
+            defer: true // Use defer to prevent window from appearing immediately
         )
-
+        
         titleVisibility = .hidden
         addTitlebarAccessoryViewController({
             let controller = NSTitlebarAccessoryViewController()
@@ -41,11 +43,13 @@ final class ChatPanelWindow: NSWindow {
         level = widgetLevel(1)
         collectionBehavior = [
             .fullScreenAuxiliary,
-            .transient,
+//            .transient,
             .fullScreenPrimary,
             .fullScreenAllowsTiling,
         ]
         hasShadow = true
+        
+        // Set contentView after basic configuration
         contentView = NSHostingView(
             rootView: ChatWindowView(
                 store: store,
@@ -56,8 +60,11 @@ final class ChatPanelWindow: NSWindow {
             )
             .environment(\.chatTabPool, chatTabPool)
         )
-        setIsVisible(true)
+        
+        // Initialize as invisible first
+        alphaValue = 0
         isPanelDisplayed = false
+        setIsVisible(true)
 
         storeObserver.observe { [weak self] in
             guard let self else { return }
@@ -70,6 +77,13 @@ final class ChatPanelWindow: NSWindow {
                 }
             }
         }
+        
+        setInitialFrame()
+    }
+    
+    private func setInitialFrame() {
+        let frame = UpdateLocationStrategy.getChatPanelFrame()
+        setFrame(frame, display: false, animate: true)
     }
 
     func setFloatOnTop(_ isFloatOnTop: Bool) {
@@ -103,5 +117,8 @@ final class ChatPanelWindow: NSWindow {
     override func miniaturize(_: Any?) {
         minimizeWindow()
     }
-}
 
+    override func close() {
+        minimizeWindow()
+    }
+}

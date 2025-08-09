@@ -5,6 +5,8 @@ import Status
 import SuggestionBasic
 import XcodeInspector
 import Logger
+import StatusBarItemView
+import GitHubCopilotViewModel
 
 extension AppDelegate {
     fileprivate var statusBarMenuIdentifier: NSUserInterfaceItemIdentifier {
@@ -19,14 +21,6 @@ extension AppDelegate {
         .init("sourceEditorDebugMenu")
     }
 
-    fileprivate var toggleCompletionsMenuItemIdentifier: NSUserInterfaceItemIdentifier {
-        .init("toggleCompletionsMenuItem")
-    }
-
-    fileprivate var toggleIgnoreLanguageMenuItemIdentifier: NSUserInterfaceItemIdentifier {
-        .init("toggleIgnoreLanguageMenuItem")
-    }
-
     @MainActor
     @objc func buildStatusBarMenu() {
         let statusBar = NSStatusBar.system
@@ -38,19 +32,16 @@ extension AppDelegate {
         let statusBarMenu = NSMenu(title: "Status Bar Menu")
         statusBarMenu.identifier = statusBarMenuIdentifier
         statusBarItem.menu = statusBarMenu
-
-        let hostAppName = Bundle.main.object(forInfoDictionaryKey: "HOST_APP_NAME") as? String
-            ?? "GitHub Copilot for Xcode"
-
+        
         let checkForUpdate = NSMenuItem(
             title: "Check for Updates",
             action: #selector(checkForUpdate),
             keyEquivalent: ""
         )
 
-        let openCopilotForXcodeItem = NSMenuItem(
-            title: "Open \(hostAppName) Settings",
-            action: #selector(openCopilotForXcode),
+        openCopilotForXcodeItem = NSMenuItem(
+            title: "Settings",
+            action: #selector(openCopilotForXcodeSettings),
             keyEquivalent: ""
         )
 
@@ -65,12 +56,19 @@ extension AppDelegate {
         xcodeInspectorDebug.submenu = xcodeInspectorDebugMenu
         xcodeInspectorDebug.isHidden = false
 
-        statusMenuItem = NSMenuItem(
+        axStatusItem = NSMenuItem(
             title: "",
-            action: #selector(openStatusLink),
+            action: #selector(openAXStatusLink),
             keyEquivalent: ""
         )
-        statusMenuItem.isHidden = true
+        axStatusItem.isHidden = true
+
+        extensionStatusItem = NSMenuItem(
+            title: "",
+            action: #selector(openExtensionStatusLink),
+            keyEquivalent: ""
+        )
+        extensionStatusItem.isHidden = true
 
         let quitItem = NSMenuItem(
             title: "Quit",
@@ -79,49 +77,98 @@ extension AppDelegate {
         )
         quitItem.target = self
 
-        let toggleCompletions = NSMenuItem(
+        toggleCompletions = NSMenuItem(
             title: "Enable/Disable Completions",
             action: #selector(toggleCompletionsEnabled),
             keyEquivalent: ""
         )
-        toggleCompletions.identifier = toggleCompletionsMenuItemIdentifier;
-
-        let toggleIgnoreLanguage = NSMenuItem(
+        
+        toggleIgnoreLanguage = NSMenuItem(
             title: "No Active Document",
             action: nil,
             keyEquivalent: ""
         )
-        toggleIgnoreLanguage.identifier = toggleIgnoreLanguageMenuItemIdentifier;
 
-        authMenuItem = NSMenuItem(
-            title: "Copilot Connection: Checking...",
-            action: #selector(openCopilotForXcode),
-            keyEquivalent: ""
+        // Auth menu item with custom view
+        accountItem = NSMenuItem()
+        accountItem.view = AccountItemView(
+            target: self,
+            action: #selector(signIntoGitHub)
         )
 
+        authStatusItem = NSMenuItem(
+            title: "",
+            action: nil,
+            keyEquivalent: ""
+        )
+        authStatusItem.isHidden = true
+        
+        quotaItem = NSMenuItem()
+        quotaItem.view = QuotaView(
+            chat: .init(
+                percentRemaining: 0,
+                unlimited: false,
+                overagePermitted: false
+            ),
+            completions: .init(
+                percentRemaining: 0,
+                unlimited: false,
+                overagePermitted: false
+            ),
+            premiumInteractions: .init(
+                percentRemaining: 0,
+                unlimited: false,
+                overagePermitted: false
+            ),
+            resetDate: "",
+            copilotPlan: ""
+        )
+        quotaItem.isHidden = true
+
         let openDocs = NSMenuItem(
-            title: "View Copilot Documentation...",
+            title: "View Documentation",
             action: #selector(openCopilotDocs),
             keyEquivalent: ""
         )
 
         let openForum = NSMenuItem(
-            title: "View Copilot Feedback Forum...",
+            title: "Feedback Forum",
             action: #selector(openCopilotForum),
             keyEquivalent: ""
         )
 
-        statusBarMenu.addItem(openCopilotForXcodeItem)
+        openChat = NSMenuItem(
+            title: "Open Chat",
+            action: #selector(openGlobalChat),
+            keyEquivalent: ""
+        )
+        
+        signOutItem = NSMenuItem(
+            title: "Sign Out",
+            action: #selector(signOutGitHub),
+            keyEquivalent: ""
+        )
+
+        statusBarMenu.addItem(accountItem)
+        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(authStatusItem)
+        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(quotaItem)
+        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(axStatusItem)
+        statusBarMenu.addItem(extensionStatusItem)
         statusBarMenu.addItem(.separator())
         statusBarMenu.addItem(checkForUpdate)
+        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(openChat)
         statusBarMenu.addItem(toggleCompletions)
         statusBarMenu.addItem(toggleIgnoreLanguage)
         statusBarMenu.addItem(.separator())
-        statusBarMenu.addItem(authMenuItem)
-        statusBarMenu.addItem(statusMenuItem)
-        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(openCopilotForXcodeItem)
         statusBarMenu.addItem(openDocs)
         statusBarMenu.addItem(openForum)
+        statusBarMenu.addItem(.separator())
+        statusBarMenu.addItem(signOutItem)
         statusBarMenu.addItem(.separator())
         statusBarMenu.addItem(xcodeInspectorDebug)
         statusBarMenu.addItem(quitItem)
@@ -142,22 +189,25 @@ extension AppDelegate: NSMenuDelegate {
                     .value(for: \.enableXcodeInspectorDebugMenu)
             }
 
-            if let toggleCompletions = menu.items.first(where: { item in
-                item.identifier == toggleCompletionsMenuItemIdentifier
-            }) {
+            if toggleCompletions != nil {
                 toggleCompletions.title = "\(UserDefaults.shared.value(for: \.realtimeSuggestionToggle) ? "Disable" : "Enable") Completions"
             }
-
-            if let toggleLanguage = menu.items.first(where: { item in
-                item.identifier == toggleIgnoreLanguageMenuItemIdentifier
-            }) {
+            
+            if toggleIgnoreLanguage != nil {
                 if let lang = DisabledLanguageList.shared.activeDocumentLanguage {
-                    toggleLanguage.title = "\(DisabledLanguageList.shared.isEnabled(lang) ? "Disable" : "Enable") Completions for \(lang.rawValue)"
-                    toggleLanguage.action = #selector(toggleIgnoreLanguage)
+                    toggleIgnoreLanguage.title = "\(DisabledLanguageList.shared.isEnabled(lang) ? "Disable" : "Enable") Completions for \(lang.rawValue)"
+                    toggleIgnoreLanguage.action = #selector(
+                        toggleIgnoreLanguageEnabled
+                    )
                 } else {
-                    toggleLanguage.title = "No Active Document"
-                    toggleLanguage.action = nil
+                    toggleIgnoreLanguage.title = "No Active Document"
+                    toggleIgnoreLanguage.action = nil
                 }
+            }
+
+            Task {
+                await forceAuthStatusCheck()
+                updateStatusBarItem()
             }
 
         case xcodeInspectorDebugMenuIdentifier:
@@ -271,8 +321,8 @@ private extension AppDelegate {
             }
         }
     }
-
-    @objc func toggleIgnoreLanguage() {
+    
+    @objc func toggleIgnoreLanguageEnabled() {
         guard let lang = DisabledLanguageList.shared.activeDocumentLanguage else { return }
 
         if DisabledLanguageList.shared.isEnabled(lang) {
@@ -298,10 +348,30 @@ private extension AppDelegate {
         }
     }
 
-    @objc func openStatusLink() {
+    @objc func openAXStatusLink() {
         Task {
-            let status = await Status.shared.getStatus()
-            if let s = status.url, let url = URL(string: s) {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    @objc func openExtensionStatusLink() {
+        Task {
+            let status = await Status.shared.getExtensionStatus()
+            if status == .notGranted {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.dt.Xcode.extension.source-editor") {
+                    NSWorkspace.shared.open(url)
+                }
+            } else {
+                NSWorkspace.restartXcode()
+            }
+        }
+    }
+    
+    @objc func openUpSellLink() {
+        Task {
+            if let url = URL(string: "https://aka.ms/github-copilot-settings") {
                 NSWorkspace.shared.open(url)
             }
         }
@@ -319,4 +389,3 @@ private extension NSMenuItem {
         return item
     }
 }
-

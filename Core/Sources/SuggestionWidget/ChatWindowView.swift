@@ -1,33 +1,50 @@
 import ActiveApplicationMonitor
+import ConversationTab
 import AppKit
 import ChatTab
 import ComposableArchitecture
 import SwiftUI
+import SharedUIComponents
+import GitHubCopilotViewModel
+import Status
+import ChatService
+import Workspace
 
 private let r: Double = 8
 
 struct ChatWindowView: View {
     let store: StoreOf<ChatPanelFeature>
     let toggleVisibility: (Bool) -> Void
+    @State private var isChatHistoryVisible: Bool = false
+    @ObservedObject private var statusObserver = StatusObserver.shared
 
     var body: some View {
         WithPerceptionTracking {
-            let _ = store.chatTabGroup.selectedTabId // force re-evaluation
-            VStack(spacing: 0) {
-                Rectangle().fill(.regularMaterial).frame(height: 28)
-
-                Divider()
-
-                ChatTabBar(store: store)
-                    .frame(height: 26)
-
-                Divider()
-
-                ChatTabContainer(store: store)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Force re-evaluation when workspace state changes
+            let currentWorkspace = store.currentChatWorkspace
+            let _ = currentWorkspace?.selectedTabId
+            ZStack {
+                if statusObserver.observedAXStatus == .notGranted {
+                    ChatNoAXPermissionView()
+                } else {
+                    switch statusObserver.authStatus.status {
+                    case .loggedIn:
+                        if currentWorkspace == nil || (currentWorkspace?.tabInfo.isEmpty ?? true) {
+                            ChatNoWorkspaceView()
+                        } else if isChatHistoryVisible {
+                            ChatHistoryViewWrapper(store: store, isChatHistoryVisible: $isChatHistoryVisible)
+                        } else {
+                            ChatView(store: store, isChatHistoryVisible: $isChatHistoryVisible)
+                        }
+                    case .notLoggedIn:
+                        ChatLoginView(viewModel: GitHubCopilotViewModel.shared)
+                    case .notAuthorized:
+                        ChatNoSubscriptionView(viewModel: GitHubCopilotViewModel.shared)
+                    case .unknown:
+                        ChatLoginView(viewModel: GitHubCopilotViewModel.shared)
+                    }
+                }
             }
-            .xcodeStyleFrame(cornerRadius: 10)
-            .ignoresSafeArea(edges: .top)
             .onChange(of: store.isPanelDisplayed) { isDisplayed in
                 toggleVisibility(isDisplayed)
             }
@@ -36,9 +53,97 @@ struct ChatWindowView: View {
     }
 }
 
+struct ChatView: View {
+    let store: StoreOf<ChatPanelFeature>
+    @Binding var isChatHistoryVisible: Bool
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(.regularMaterial).frame(height: 28)
+
+            Divider()
+
+            ZStack {
+                VStack(spacing: 0) {
+                    ChatBar(store: store, isChatHistoryVisible: $isChatHistoryVisible)
+                        .frame(height: 32)
+                        .background(Color(nsColor: .windowBackgroundColor))
+
+                    Divider()
+
+                    ChatTabContainer(store: store)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .xcodeStyleFrame(cornerRadius: 10)
+        .ignoresSafeArea(edges: .top)
+    }
+}
+
+struct ChatHistoryViewWrapper: View {
+    let store: StoreOf<ChatPanelFeature>
+    @Binding var isChatHistoryVisible: Bool
+
+    
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(spacing: 0) {
+                Rectangle().fill(.regularMaterial).frame(height: 28)
+
+                Divider()
+                
+                ChatHistoryView(
+                    store: store,
+                    isChatHistoryVisible: $isChatHistoryVisible
+                )
+                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
+                )
+            }
+            .xcodeStyleFrame(cornerRadius: 10)
+            .ignoresSafeArea(edges: .top)
+            .preferredColorScheme(store.colorScheme)
+            .focusable()
+            .onExitCommand(perform: {
+                isChatHistoryVisible = false
+            })
+        }
+    }
+}
+
+struct ChatLoadingView: View {
+    var body: some View {
+        VStack(alignment: .center) {
+            
+            Spacer()
+            
+            VStack(spacing: 24) {
+                Instruction(isAgentMode: .constant(false))
+                
+                ProgressView("Loading...")
+                    
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            // keep same as chat view
+            .padding(.top, 20) // chat bar
+            
+            Spacer()
+
+        }
+        .xcodeStyleFrame(cornerRadius: 10)
+        .ignoresSafeArea(edges: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 struct ChatTitleBar: View {
     let store: StoreOf<ChatPanelFeature>
     @State var isHovering = false
+    @AppStorage(\.autoAttachChatToXcode) var autoAttachChatToXcode
 
     var body: some View {
         WithPerceptionTracking {
@@ -65,18 +170,20 @@ struct ChatTitleBar: View {
 
                 Spacer()
 
-                TrafficLightButton(
-                    isHovering: isHovering,
-                    isActive: store.isDetached,
-                    color: Color(nsColor: .systemCyan),
-                    action: {
-                        store.send(.toggleChatPanelDetachedButtonClicked)
+                if !autoAttachChatToXcode {
+                    TrafficLightButton(
+                        isHovering: isHovering,
+                        isActive: store.isDetached,
+                        color: Color(nsColor: .systemCyan),
+                        action: {
+                            store.send(.toggleChatPanelDetachedButtonClicked)
+                        }
+                    ) {
+                        Image(systemName: "pin.fill")
+                            .foregroundStyle(.black.opacity(0.5))
+                            .font(Font.system(size: 6).weight(.black))
+                            .transformEffect(.init(translationX: 0, y: 0.5))
                     }
-                ) {
-                    Image(systemName: "pin.fill")
-                        .foregroundStyle(.black.opacity(0.5))
-                        .font(Font.system(size: 6).weight(.black))
-                        .transformEffect(.init(translationX: 0, y: 0.5))
                 }
             }
             .buttonStyle(.plain)
@@ -134,8 +241,9 @@ private extension View {
     }
 }
 
-struct ChatTabBar: View {
+struct ChatBar: View {
     let store: StoreOf<ChatPanelFeature>
+    @Binding var isChatHistoryVisible: Bool
 
     struct TabBarState: Equatable {
         var tabInfo: IdentifiedArray<String, ChatTabInfo>
@@ -143,36 +251,38 @@ struct ChatTabBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            Divider()
-            Tabs(store: store)
-            CreateButton(store: store)
-        }
-        .background {
-            Button(action: { store.send(.switchToNextTab) }) { EmptyView() }
-                .opacity(0)
-                .keyboardShortcut("]", modifiers: [.command, .shift])
-            Button(action: { store.send(.switchToPreviousTab) }) { EmptyView() }
-                .opacity(0)
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+        WithPerceptionTracking {
+            HStack(spacing: 0) {
+                if store.chatHistory.selectedWorkspaceName != nil {
+                    ChatWindowHeader(store: store)
+                }
+
+                Spacer()
+
+                CreateButton(store: store)
+
+                ChatHistoryButton(store: store, isChatHistoryVisible: $isChatHistoryVisible)
+                
+                SettingsButton(store: store)
+            }
+            .padding(.horizontal, 12)
         }
     }
 
     struct Tabs: View {
         let store: StoreOf<ChatPanelFeature>
-        @State var draggingTabId: String?
         @Environment(\.chatTabPool) var chatTabPool
 
         var body: some View {
             WithPerceptionTracking {
-                let tabInfo = store.chatTabGroup.tabInfo
-                let selectedTabId = store.chatTabGroup.selectedTabId
-                    ?? store.chatTabGroup.tabInfo.first?.id
+                let tabInfo = store.currentChatWorkspace?.tabInfo
+                let selectedTabId = store.currentChatWorkspace?.selectedTabId
+                ?? store.currentChatWorkspace?.tabInfo.first?.id
                     ?? ""
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
                         HStack(spacing: 0) {
-                            ForEach(tabInfo, id: \.id) { info in
+                            ForEach(tabInfo!, id: \.id) { info in
                                 if let tab = chatTabPool.getTab(of: info.id) {
                                     ChatTabBarButton(
                                         store: store,
@@ -185,20 +295,6 @@ struct ChatTabBar: View {
                                         tab.menu
                                     }
                                     .id(info.id)
-                                    .onDrag {
-                                        draggingTabId = info.id
-                                        return NSItemProvider(object: info.id as NSString)
-                                    }
-                                    .onDrop(
-                                        of: [.text],
-                                        delegate: ChatTabBarDropDelegate(
-                                            store: store,
-                                            tabs: tabInfo,
-                                            itemId: info.id,
-                                            draggingTabId: $draggingTabId
-                                        )
-                                    )
-
                                 } else {
                                     EmptyView()
                                 }
@@ -216,77 +312,86 @@ struct ChatTabBar: View {
         }
     }
 
+    struct ChatWindowHeader: View {
+        let store: StoreOf<ChatPanelFeature>
+
+        var body: some View {
+            WithPerceptionTracking {
+                HStack(spacing: 0) {
+                    Image("XcodeIcon")
+                            .resizable()
+                            .renderingMode(.original)
+                            .scaledToFit()
+                            .frame(width: 24, height: 24)
+
+                    Text(store.chatHistory.selectedWorkspaceName!)
+                        .font(.system(size: 13, weight: .bold))
+                        .padding(.leading, 4)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 192, alignment: .leading)
+                        .help(store.chatHistory.selectedWorkspacePath!)
+                }
+            }
+        }
+    }
+
     struct CreateButton: View {
         let store: StoreOf<ChatPanelFeature>
 
         var body: some View {
             WithPerceptionTracking {
-                let collection = store.chatTabGroup.tabCollection
-                Menu {
-                    ForEach(0..<collection.endIndex, id: \.self) { index in
-                        switch collection[index] {
-                        case let .kind(kind):
-                            Button(action: {
-                                store.send(.createNewTapButtonClicked(kind: kind))
-                            }) {
-                                Text(kind.title)
-                            }.disabled(kind.builder is DisabledChatTabBuilder)
-                        case let .folder(title, list):
-                            Menu {
-                                ForEach(0..<list.endIndex, id: \.self) { index in
-                                    Button(action: {
-                                        store.send(
-                                            .createNewTapButtonClicked(kind: list[index])
-                                        )
-                                    }) {
-                                        Text(list[index].title)
-                                    }
-                                }
-                            } label: {
-                                Text(title)
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                } primaryAction: {
+                Button(action: {
                     store.send(.createNewTapButtonClicked(kind: nil))
+                }) {
+                    Image(systemName: "plus.bubble")
                 }
-                .foregroundColor(.secondary)
-                .menuStyle(.borderedButton)
+                .buttonStyle(HoverButtonStyle())
                 .padding(.horizontal, 4)
-                .fixedSize(horizontal: true, vertical: false)
-                .onHover { isHovering in
-                    if isHovering {
-                        store.send(.createNewTapButtonHovered)
-                    }
-                }
+                .help("New Chat")
+                .accessibilityLabel("New Chat")
             }
         }
     }
-}
-
-struct ChatTabBarDropDelegate: DropDelegate {
-    let store: StoreOf<ChatPanelFeature>
-    let tabs: IdentifiedArray<String, ChatTabInfo>
-    let itemId: String
-    @Binding var draggingTabId: String?
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        return DropProposal(operation: .move)
+    
+    struct ChatHistoryButton: View {
+        let store: StoreOf<ChatPanelFeature>
+        @Binding var isChatHistoryVisible: Bool
+        
+        var body: some View {
+            WithPerceptionTracking {
+                Button(action: {
+                    isChatHistoryVisible = true
+                }) {
+                    if #available(macOS 15.0, *) {
+                        Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                    } else {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                }
+                .buttonStyle(HoverButtonStyle())
+                .padding(.horizontal, 4)
+                .help("Show Chats...")
+                .accessibilityLabel("Show Chats...")
+            }
+        }
     }
+    
+    struct SettingsButton: View {
+        let store: StoreOf<ChatPanelFeature>
 
-    func performDrop(info: DropInfo) -> Bool {
-        draggingTabId = nil
-        return true
-    }
-
-    func dropEntered(info: DropInfo) {
-        guard itemId != draggingTabId else { return }
-        let from = tabs.firstIndex { $0.id == draggingTabId }
-        let to = tabs.firstIndex { $0.id == itemId }
-        guard let from, let to, from != to else { return }
-        store.send(.moveChatTab(from: from, to: to))
+        var body: some View {
+            WithPerceptionTracking {
+                Button(action: {
+                    store.send(.openSettings)
+                }) {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(HoverButtonStyle())
+                .padding(.horizontal, 4)
+                .help("Open Settings")
+                .accessibilityLabel("Open Settings")
+            }
+        }
     }
 }
 
@@ -299,77 +404,113 @@ struct ChatTabBarButton<Content: View, Icon: View>: View {
     @State var isHovered: Bool = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 4) {
-                icon().foregroundColor(.secondary)
-                content()
-            }
-            .font(.callout)
-            .lineLimit(1)
-            .frame(maxWidth: 120)
-            .padding(.horizontal, 28)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                store.send(.tabClicked(id: info.id))
-            }
-            .overlay(alignment: .leading) {
-                Button(action: {
-                    store.send(.closeTabButtonClicked(id: info.id))
-                }) {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.secondary)
+        if self.isSelected {
+            HStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    icon()
+                        .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .padding(2)
-                .padding(.leading, 8)
-                .opacity(isHovered ? 1 : 0)
+                .font(.callout)
+                .lineLimit(1)
             }
-            .onHover { isHovered = $0 }
-            .animation(.linear(duration: 0.1), value: isHovered)
-            .animation(.linear(duration: 0.1), value: isSelected)
-
-            Divider().padding(.vertical, 6)
+            .frame(maxHeight: .infinity)
         }
-        .background(isSelected ? Color(nsColor: .selectedControlColor) : Color.clear)
-        .frame(maxHeight: .infinity)
     }
 }
 
 struct ChatTabContainer: View {
     let store: StoreOf<ChatPanelFeature>
     @Environment(\.chatTabPool) var chatTabPool
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         WithPerceptionTracking {
-            let tabInfo = store.chatTabGroup.tabInfo
-            let selectedTabId = store.chatTabGroup.selectedTabId
-                ?? store.chatTabGroup.tabInfo.first?.id
+            let tabInfoArray = store.currentChatWorkspace?.tabInfo
+            let selectedTabId = store.currentChatWorkspace?.selectedTabId
+                ?? store.currentChatWorkspace?.tabInfo.first?.id
                 ?? ""
 
+            if let tabInfoArray = tabInfoArray, !tabInfoArray.isEmpty {
+                activeTabsView(
+                    tabInfoArray: tabInfoArray,
+                    selectedTabId: selectedTabId
+                )
+            } else {
+                // Fallback view for empty state (rarely seen in practice)
+                EmptyView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .onAppear {
+            setupPasteMonitor()
+        }
+        .onDisappear {
+            removePasteMonitor()
+        }
+    }
+
+    // View displayed when there are active tabs
+    private func activeTabsView(
+        tabInfoArray: IdentifiedArray<String, ChatTabInfo>,
+        selectedTabId: String
+    ) -> some View {
+        GeometryReader { geometry in
             ZStack {
-                if tabInfo.isEmpty {
-                    Text("Empty")
-                } else {
-                    ForEach(tabInfo) { tabInfo in
-                        if let tab = chatTabPool.getTab(of: tabInfo.id) {
-                            let isActive = tab.id == selectedTabId
+                ForEach(tabInfoArray) { tabInfo in
+                    if let tab = chatTabPool.getTab(of: tabInfo.id) {
+                        let isActive = tab.id == selectedTabId
+                        
+                        if isActive {
+                            // Only render the active tab with full layout
                             tab.body
-                                .opacity(isActive ? 1 : 0)
-                                .disabled(!isActive)
-                                .allowsHitTesting(isActive)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                // move it out of window
-                                .rotationEffect(
-                                    isActive ? .zero : .degrees(90),
-                                    anchor: .topLeading
+                                .frame(
+                                    width: geometry.size.width,
+                                    height: geometry.size.height
                                 )
                         } else {
-                            EmptyView()
+                            // Render inactive tabs with minimal footprint to avoid layout conflicts
+                            tab.body
+                                .frame(width: 1, height: 1)
+                                .opacity(0)
+                                .allowsHitTesting(false)
+                                .clipped()
                         }
                     }
                 }
             }
         }
+    }
+    
+    private func setupPasteMonitor() {
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.contains(.command),
+                  event.charactersIgnoringModifiers?.lowercased() == "v" else {
+                return event
+            }
+            
+            // Find the active chat tab and forward paste event to it
+            if let activeConversationTab = getActiveConversationTab() {
+                if !activeConversationTab.handlePasteEvent() {
+                    return event
+                }
+            }
+            
+            return nil
+        }
+    }
+    
+    private func removePasteMonitor() {
+        if let monitor = pasteMonitor {
+            NSEvent.removeMonitor(monitor)
+            pasteMonitor = nil
+        }
+    }
+    
+    private func getActiveConversationTab() -> ConversationTab? {
+        guard let selectedTabId = store.currentChatWorkspace?.selectedTabId,
+              let chatTab = chatTabPool.getTab(of: selectedTabId) as? ConversationTab else {
+            return nil
+        }
+        return chatTab
     }
 }
 
@@ -398,16 +539,23 @@ struct ChatWindowView_Previews: PreviewProvider {
     static func createStore() -> StoreOf<ChatPanelFeature> {
         StoreOf<ChatPanelFeature>(
             initialState: .init(
-                chatTabGroup: .init(
-                    tabInfo: [
-                        .init(id: "2", title: "Empty-2"),
-                        .init(id: "3", title: "Empty-3"),
-                        .init(id: "4", title: "Empty-4"),
-                        .init(id: "5", title: "Empty-5"),
-                        .init(id: "6", title: "Empty-6"),
-                        .init(id: "7", title: "Empty-7"),
-                    ] as IdentifiedArray<String, ChatTabInfo>,
-                    selectedTabId: "2"
+                chatHistory: .init(
+                    workspaces: [
+                        .init(
+                            id: .init(path: "p", username: "u"),
+                            tabInfo: [
+                                .init(id: "2", title: "Empty-2", workspacePath: "path", username: "username"),
+                                .init(id: "3", title: "Empty-3", workspacePath: "path", username: "username"),
+                                .init(id: "4", title: "Empty-4", workspacePath: "path", username: "username"),
+                                .init(id: "5", title: "Empty-5", workspacePath: "path", username: "username"),
+                                .init(id: "6", title: "Empty-6", workspacePath: "path", username: "username"),
+                                .init(id: "7", title: "Empty-7", workspacePath: "path", username: "username"),
+                            ] as IdentifiedArray<String, ChatTabInfo>,
+                            selectedTabId: "2"
+                        ) { _ in }
+                    ] as IdentifiedArray<WorkspaceIdentifier, ChatWorkspace>,
+                    selectedWorkspacePath: "activeWorkspacePath",
+                    selectedWorkspaceName: "activeWorkspacePath"
                 ),
                 isPanelDisplayed: true
             ),
@@ -423,3 +571,8 @@ struct ChatWindowView_Previews: PreviewProvider {
     }
 }
 
+struct ChatLoadingView_Previews: PreviewProvider {
+    static var previews: some View {
+        ChatLoadingView()
+    }
+}

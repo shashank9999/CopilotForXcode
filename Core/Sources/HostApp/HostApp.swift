@@ -8,15 +8,17 @@ extension KeyboardShortcuts.Name {
 }
 
 @Reducer
-struct HostApp {
+public struct HostApp {
     @ObservableState
-    struct State: Equatable {
+    public struct State: Equatable {
         var general = General.State()
+        public var activeTabIndex: Int = 0
     }
 
-    enum Action: Equatable {
+    public enum Action: Equatable {
         case appear
         case general(General.Action)
+        case setActiveTab(Int)
     }
 
     @Dependency(\.toast) var toast
@@ -25,17 +27,21 @@ struct HostApp {
         KeyboardShortcuts.userDefaults = .shared
     }
 
-    var body: some ReducerOf<Self> {
+    public var body: some ReducerOf<Self> {
         Scope(state: \.general, action: /Action.general) {
             General()
         }
 
-        Reduce { _, action in
+        Reduce { state, action in
             switch action {
             case .appear:
                 return .none
 
             case .general:
+                return .none
+
+            case .setActiveTab(let index):
+                state.activeTabIndex = index
                 return .none
             }
         }
@@ -66,5 +72,3 @@ extension DependencyValues {
         set { self[UserDefaultsDependencyKey.self] = newValue }
     }
 }
-
-

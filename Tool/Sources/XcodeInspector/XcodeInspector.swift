@@ -55,6 +55,7 @@ public final class XcodeInspector: ObservableObject {
     @Published public fileprivate(set) var focusedEditor: SourceEditor?
     @Published public fileprivate(set) var focusedElement: AXUIElement?
     @Published public fileprivate(set) var completionPanel: AXUIElement?
+    @Published public fileprivate(set) var latestNonRootWorkspaceURL: URL? = nil
 
     /// Get the content of the source editor.
     ///
@@ -136,6 +137,7 @@ public final class XcodeInspector: ObservableObject {
             focusedEditor = nil
             focusedElement = nil
             completionPanel = nil
+            latestNonRootWorkspaceURL = nil
         }
 
         let runningApplications = NSWorkspace.shared.runningApplications
@@ -283,6 +285,7 @@ public final class XcodeInspector: ObservableObject {
         activeProjectRootURL = xcode.projectRootURL
         activeWorkspaceURL = xcode.workspaceURL
         focusedWindow = xcode.focusedWindow
+        storeLatestNonRootWorkspaceURL(xcode.workspaceURL) // Add this call
 
         let setFocusedElement = { @XcodeInspectorActor [weak self] in
             guard let self else { return }
@@ -360,7 +363,10 @@ public final class XcodeInspector: ObservableObject {
         }.store(in: &activeXcodeCancellable)
 
         xcode.$workspaceURL.sink { [weak self] url in
-            Task { @XcodeInspectorActor in self?.activeWorkspaceURL = url }
+            Task { @XcodeInspectorActor in
+                self?.activeWorkspaceURL = url
+                self?.storeLatestNonRootWorkspaceURL(url)
+            }
         }.store(in: &activeXcodeCancellable)
 
         xcode.$projectRootURL.sink { [weak self] url in
@@ -405,7 +411,7 @@ public final class XcodeInspector: ObservableObject {
         """
 
         if UserDefaults.shared.value(for: \.toastForTheReasonWhyXcodeInspectorNeedsToBeRestarted) {
-            toast.toast(content: message, type: .warning)
+            toast.toast(content: message, level: .warning)
         } else {
             Logger.service.info(message)
         }
@@ -415,5 +421,12 @@ public final class XcodeInspector: ObservableObject {
             activeXcode.observeAXNotifications()
         }
     }
-}
 
+    @XcodeInspectorActor
+    private func storeLatestNonRootWorkspaceURL(_ newWorkspaceURL: URL?) {
+        if let url = newWorkspaceURL, url.path != "/" {
+            self.latestNonRootWorkspaceURL = url
+        }
+        // If newWorkspaceURL is nil or its path is "/", latestNonRootWorkspaceURL remains unchanged.
+    }
+}

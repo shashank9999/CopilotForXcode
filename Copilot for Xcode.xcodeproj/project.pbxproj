@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -11,6 +11,7 @@
 		3ABBEA2B2C8BA00300C61D61 /* copilot-language-server-arm64 in Resources */ = {isa = PBXBuildFile; fileRef = 3ABBEA2A2C8BA00300C61D61 /* copilot-language-server-arm64 */; };
 		3ABBEA2C2C8BA00800C61D61 /* copilot-language-server-arm64 in Resources */ = {isa = PBXBuildFile; fileRef = 3ABBEA2A2C8BA00300C61D61 /* copilot-language-server-arm64 */; };
 		3ABBEA2D2C8BA00B00C61D61 /* copilot-language-server in Resources */ = {isa = PBXBuildFile; fileRef = 3ABBEA282C8B9FE100C61D61 /* copilot-language-server */; };
+		3E5DB7502D6B8FA500418952 /* ReleaseNotes.md in Resources */ = {isa = PBXBuildFile; fileRef = 3E5DB74F2D6B88EE00418952 /* ReleaseNotes.md */; };
 		424ACA212CA4697200FA20F2 /* Credits.rtf in Resources */ = {isa = PBXBuildFile; fileRef = 424ACA202CA4697200FA20F2 /* Credits.rtf */; };
 		427C63282C6E868B000E557C /* OpenSettingsCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 427C63272C6E868B000E557C /* OpenSettingsCommand.swift */; };
 		5EC511E32C90CE7400632BAB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C8189B1D2938973000C9DCDA /* Assets.xcassets */; };
@@ -189,6 +190,7 @@
 /* Begin PBXFileReference section */
 		3ABBEA282C8B9FE100C61D61 /* copilot-language-server */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = "copilot-language-server"; path = "Server/node_modules/@github/copilot-language-server/native/darwin-x64/copilot-language-server"; sourceTree = SOURCE_ROOT; };
 		3ABBEA2A2C8BA00300C61D61 /* copilot-language-server-arm64 */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = "copilot-language-server-arm64"; path = "Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server-arm64"; sourceTree = SOURCE_ROOT; };
+		3E5DB74F2D6B88EE00418952 /* ReleaseNotes.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ReleaseNotes.md; sourceTree = "<group>"; };
 		424ACA202CA4697200FA20F2 /* Credits.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = Credits.rtf; sourceTree = "<group>"; };
 		427C63272C6E868B000E557C /* OpenSettingsCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenSettingsCommand.swift; sourceTree = "<group>"; };
 		C8009BFE2941C551007AA7E8 /* ToggleRealtimeSuggestionsCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleRealtimeSuggestionsCommand.swift; sourceTree = "<group>"; };
@@ -252,6 +254,10 @@
 		C8DD9CB02BC673F80036641C /* CloseIdleTabsCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloseIdleTabsCommand.swift; sourceTree = "<group>"; };
 		C8F103292A7A365000D28F4F /* launchAgent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = launchAgent.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		9E6A029A2DBDF64200AB6BD5 /* Server */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Server; sourceTree = SOURCE_ROOT; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		C81458892939EFDC00135263 /* Frameworks */ = {
@@ -345,6 +351,7 @@
 		C8189B0D2938972F00C9DCDA = {
 			isa = PBXGroup;
 			children = (
+				3E5DB74F2D6B88EE00418952 /* ReleaseNotes.md */,
 				C887BC832965D96000931567 /* DEVELOPMENT.md */,
 				C8520308293D805800460097 /* README.md */,
 				C8F103292A7A365000D28F4F /* launchAgent.plist */,
@@ -354,6 +361,7 @@
 				C81458AE293A009800135263 /* Config.debug.xcconfig */,
 				C8CD828229B88006008D044D /* TestPlan.xctestplan */,
 				C828B27D2B1F241500E7612A /* ExtensionPoint.appextensionpoint */,
+				9E6A029A2DBDF64200AB6BD5 /* Server */,
 				C81D181E2A1B509B006C1B70 /* Tool */,
 				C8189B282938979000C9DCDA /* Core */,
 				C8189B182938972F00C9DCDA /* Copilot for Xcode */,
@@ -678,6 +686,7 @@
 				C861E6152994F6080056CB02 /* Assets.xcassets in Resources */,
 				3ABBEA2D2C8BA00B00C61D61 /* copilot-language-server in Resources */,
 				C81291D72994FE6900196E12 /* Main.storyboard in Resources */,
+				3E5DB7502D6B8FA500418952 /* ReleaseNotes.md in Resources */,
 				5EC511E42C90CE9800632BAB /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -696,24 +705,21 @@
 /* Begin PBXShellScriptBuildPhase section */
 		3A60421A2C8955710006B34C /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/Server/package.json",
-				"$(SRCROOT)/Server/package-lock.json",
 			);
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/Server/node_modules/@github/copilot-language-server/native/darwin-x64/copilot-language-server",
-				"$(SRCROOT)/Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server-arm64",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "npm -C Server install\ncp Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server-arm64\n";
+			shellScript = "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH\n\nnpm -C Server install\ncp Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server Server/node_modules/@github/copilot-language-server/native/darwin-arm64/copilot-language-server-arm64\n\necho \"Build and copy webview js/html files as the bundle resources\"\nnpm -C Server run build\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/webViewDist\"\ncp -R Server/dist/* \"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/webViewDist/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

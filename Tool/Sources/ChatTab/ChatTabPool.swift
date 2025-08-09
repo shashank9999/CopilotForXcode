@@ -5,9 +5,9 @@ import SwiftUI
 
 /// A pool that stores all the available tabs.
 public final class ChatTabPool {
-    public var createStore: (String) -> StoreOf<ChatTabItem> = { id in
+    public var createStore: (ChatTabInfo) -> StoreOf<ChatTabItem> = { info in
         .init(
-            initialState: .init(id: id, title: ""),
+            initialState: info,
             reducer: { ChatTabItem() }
         )
     }
@@ -27,6 +27,8 @@ public final class ChatTabPool {
     }
 
     public func removeTab(of id: String) {
+        guard getTab(of: id) != nil else { return }
+        
         pool.removeValue(forKey: id)
     }
 }

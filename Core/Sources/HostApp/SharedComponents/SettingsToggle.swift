@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SettingsToggle: View {
+    static let defaultPadding: CGFloat = 10
+    
     let title: String
     let isOn: Binding<Bool>
 
@@ -11,7 +13,7 @@ struct SettingsToggle: View {
             Toggle(isOn: isOn) {}
                 .toggleStyle(.switch)
         }
-        .padding(10)
+        .padding(SettingsToggle.defaultPadding)
     }
 }
 

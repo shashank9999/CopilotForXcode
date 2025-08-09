@@ -12,11 +12,14 @@ actor WidgetWindowsController: NSObject {
     let userDefaultsObservers = WidgetUserDefaultsObservers()
     var xcodeInspector: XcodeInspector { .shared }
 
-    let windows: WidgetWindows
-    let store: StoreOf<WidgetFeature>
-    let chatTabPool: ChatTabPool
+    nonisolated let windows: WidgetWindows
+    nonisolated let store: StoreOf<WidgetFeature>
+    nonisolated let chatTabPool: ChatTabPool
 
     var currentApplicationProcessIdentifier: pid_t?
+    
+    weak var currentXcodeApp: XcodeAppInstanceInspector?
+    weak var previousXcodeApp: XcodeAppInstanceInspector?
 
     var cancellable: Set<AnyCancellable> = []
     var observeToAppTask: Task<Void, Error>?
@@ -84,6 +87,12 @@ private extension WidgetWindowsController {
             if app.isXcode {
                 updateWindowLocation(animated: false, immediately: true)
                 updateWindowOpacity(immediately: false)
+                
+                if let xcodeApp = app as? XcodeAppInstanceInspector {
+                    previousXcodeApp = currentXcodeApp ?? xcodeApp
+                    currentXcodeApp = xcodeApp
+                }
+                
             } else {
                 updateWindowOpacity(immediately: true)
                 updateWindowLocation(animated: false, immediately: false)
@@ -142,13 +151,14 @@ private extension WidgetWindowsController {
                     await updateWidgetsAndNotifyChangeOfEditor(immediately: false)
                 case .mainWindowChanged:
                     await updateWidgetsAndNotifyChangeOfEditor(immediately: false)
-                case .moved,
-                     .resized,
-                     .windowMoved,
-                     .windowResized,
-                     .windowMiniaturized,
-                     .windowDeminiaturized:
+                case .windowMiniaturized, .windowDeminiaturized:
                     await updateWidgets(immediately: false)
+                case .resized,
+                    .moved,
+                    .windowMoved,
+                    .windowResized:
+                    await updateWidgets(immediately: false)
+                    await updateAttachedChatWindowLocation(notification)
                 case .created, .uiElementDestroyed, .xcodeCompletionPanelChanged,
                      .applicationDeactivated:
                     continue
@@ -233,6 +243,9 @@ extension WidgetWindowsController {
     }
 
     func generateWidgetLocation() -> WidgetLocation? {
+        // Default location when no active application/window
+        let defaultLocation = generateDefaultLocation()
+        
         if let application = xcodeInspector.latestActiveXcode?.appElement {
             if let focusElement = xcodeInspector.focusedEditor?.element,
                let parent = focusElement.parent,
@@ -303,11 +316,7 @@ extension WidgetWindowsController {
                         .first(where: { $0.identifier == "Xcode.WorkspaceWindow" }),
                         let rect = workspaceWindow.rect
                     else {
-                        return WidgetLocation(
-                            widgetFrame: .zero,
-                            tabFrame: .zero,
-                            defaultPanelLocation: .init(frame: .zero, alignPanelTop: false)
-                        )
+                        return defaultLocation
                     }
 
                     window = workspaceWindow
@@ -335,7 +344,22 @@ extension WidgetWindowsController {
                 )
             }
         }
-        return nil
+        return defaultLocation
+    }
+    
+    // Generate a default location when no workspace is opened
+    private func generateDefaultLocation() -> WidgetLocation {
+        let chatPanelFrame = UpdateLocationStrategy.getChatPanelFrame()
+        
+        return WidgetLocation(
+            widgetFrame: .zero,
+            tabFrame: .zero,
+            defaultPanelLocation: .init(
+                frame: chatPanelFrame,
+                alignPanelTop: false
+            ),
+            suggestionPanelLocation: nil
+        )
     }
 
     func updatePanelState(_ location: WidgetLocation) async {
@@ -360,7 +384,15 @@ extension WidgetWindowsController {
             await MainActor.run {
                 let state = store.withState { $0 }
                 let isChatPanelDetached = state.chatPanelState.isDetached
-                let hasChat = !state.chatPanelState.chatTabGroup.tabInfo.isEmpty
+                // Check if the user has requested to display the panel, regardless of workspace state
+                let isPanelDisplayed = state.chatPanelState.isPanelDisplayed
+                
+                // Keep the chat panel visible even when there's no workspace/tabs if it's explicitly displayed
+                // This ensures the login screen remains visible
+                let shouldShowChatPanel = isPanelDisplayed || (
+                    state.chatPanelState.currentChatWorkspace != nil &&
+                    !state.chatPanelState.currentChatWorkspace!.tabInfo.isEmpty
+                )
 
                 if let activeApp, activeApp.isXcode {
                     let application = activeApp.appElement
@@ -373,7 +405,7 @@ extension WidgetWindowsController {
                     windows.toastWindow.alphaValue = noFocus ? 0 : 1
 
                     if isChatPanelDetached {
-                        windows.chatPanelWindow.isWindowHidden = !hasChat
+                        windows.chatPanelWindow.isWindowHidden = !shouldShowChatPanel
                     } else {
                         windows.chatPanelWindow.isWindowHidden = noFocus
                     }
@@ -402,7 +434,7 @@ extension WidgetWindowsController {
                     }
                     windows.toastWindow.alphaValue = noFocus ? 0 : 1
                     if isChatPanelDetached {
-                        windows.chatPanelWindow.isWindowHidden = !hasChat
+                        windows.chatPanelWindow.isWindowHidden = !shouldShowChatPanel
                     } else {
                         windows.chatPanelWindow.isWindowHidden = noFocus && !windows
                             .chatPanelWindow.isKeyWindow
@@ -420,6 +452,57 @@ extension WidgetWindowsController {
         }
 
         updateWindowOpacityTask = task
+    }
+    
+    @MainActor
+    func updateAttachedChatWindowLocation(_ notif: XcodeAppInstanceInspector.AXNotification? = nil) async {
+        guard let currentXcodeApp = (await currentXcodeApp),
+              let currentFocusedWindow = currentXcodeApp.appElement.focusedWindow,
+              let currentXcodeScreen = currentXcodeApp.appScreen,
+              let currentXcodeRect = currentFocusedWindow.rect,
+              let notif = notif
+        else { return }
+        
+        if let previousXcodeApp = (await previousXcodeApp),
+           currentXcodeApp.processIdentifier == previousXcodeApp.processIdentifier {
+            if currentFocusedWindow.isFullScreen == true {
+                return
+            }
+        }
+        
+        let isAttachedToXcodeEnabled = UserDefaults.shared.value(for: \.autoAttachChatToXcode)
+        guard isAttachedToXcodeEnabled else { return }
+        
+        guard notif.element.isXcodeWorkspaceWindow else { return }
+        
+        let state = store.withState { $0 }
+        if state.chatPanelState.isPanelDisplayed && !windows.chatPanelWindow.isWindowHidden {
+            var frame = UpdateLocationStrategy.getAttachedChatPanelFrame(
+                NSScreen.main ?? NSScreen.screens.first!, 
+                workspaceWindowElement: notif.element
+            )
+            
+            let screenMaxX = currentXcodeScreen.visibleFrame.maxX
+            if screenMaxX - currentXcodeRect.maxX < Style.minChatPanelWidth
+            {
+                if let previousXcodeRect = (await previousXcodeApp?.appElement.focusedWindow?.rect),
+                   screenMaxX - previousXcodeRect.maxX < Style.minChatPanelWidth
+                {
+                    let isSameScreen = currentXcodeScreen.visibleFrame.intersects(windows.chatPanelWindow.frame)
+                    // Only update y and height
+                    frame = .init(
+                        x: isSameScreen ? windows.chatPanelWindow.frame.minX : frame.minX,
+                        y: frame.minY,
+                        width: isSameScreen ? windows.chatPanelWindow.frame.width : frame.width,
+                        height: frame.height
+                    )
+                }
+            }
+            
+            windows.chatPanelWindow.setFrame(frame, display: true, animate: true)
+            
+            await adjustChatPanelWindowLevel()
+        }
     }
 
     func updateWindowLocation(
@@ -458,8 +541,11 @@ extension WidgetWindowsController {
                     animate: animated
                 )
             }
-
-            if isChatPanelDetached {
+            
+            let isAttachedToXcodeEnabled = UserDefaults.shared.value(for: \.autoAttachChatToXcode)
+            if isAttachedToXcodeEnabled {
+                // update in `updateAttachedChatWindowLocation`
+            } else if isChatPanelDetached {
                 // don't update it!
             } else {
                 windows.chatPanelWindow.setFrame(
@@ -500,10 +586,10 @@ extension WidgetWindowsController {
 
     @MainActor
     func adjustChatPanelWindowLevel() async {
+        let window = windows.chatPanelWindow
+        
         let disableFloatOnTopWhenTheChatPanelIsDetached = UserDefaults.shared
             .value(for: \.disableFloatOnTopWhenTheChatPanelIsDetached)
-
-        let window = windows.chatPanelWindow
         guard disableFloatOnTopWhenTheChatPanelIsDetached else {
             window.setFloatOnTop(true)
             return
@@ -526,7 +612,7 @@ extension WidgetWindowsController {
         } else {
             false
         }
-
+        
         if !floatOnTopWhenOverlapsXcode || !latestAppIsXcodeOrExtension {
             window.setFloatOnTop(false)
         } else {
@@ -731,6 +817,8 @@ public final class WidgetWindows {
     }()
 
     @MainActor
+    // The toast window area is now capturing mouse events
+    // Even in the transparent parts where there's no visible content.
     lazy var toastWindow = {
         let it = CanBecomeKeyWindow(
             contentRect: .zero,
@@ -739,9 +827,9 @@ public final class WidgetWindows {
             defer: false
         )
         it.isReleasedWhenClosed = false
-        it.isOpaque = true
+        it.isOpaque = false
         it.backgroundColor = .clear
-        it.level = widgetLevel(0)
+        it.level = widgetLevel(2)
         it.collectionBehavior = [.fullScreenAuxiliary, .transient, .canJoinAllSpaces]
         it.hasShadow = false
         it.contentView = NSHostingView(
@@ -751,7 +839,6 @@ public final class WidgetWindows {
             ))
         )
         it.setIsVisible(true)
-        it.ignoresMouseEvents = true
         it.canBecomeKeyChecker = { false }
         return it
     }()

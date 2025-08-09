@@ -91,6 +91,27 @@
         "identifier" : "WorkspaceSuggestionServiceTests",
         "name" : "WorkspaceSuggestionServiceTests"
       }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Tool",
+        "identifier" : "WorkspaceTests",
+        "name" : "WorkspaceTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Core",
+        "identifier" : "ChatServiceTests",
+        "name" : "ChatServiceTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Tool",
+        "identifier" : "SystemUtilsTests",
+        "name" : "SystemUtilsTests"
+      }
     }
   ],
   "version" : 1
